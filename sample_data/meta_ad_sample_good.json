@@ -1,0 +1,74 @@
+{
+  "asset_meta": {
+    "ad_id": "ad_987654321_good",
+    "platform": "meta",
+    "campaign_name": "Summer_Sale_2026",
+    "adset_name": "High_Intent_Buyers",
+    "ad_name": "Static_Image_Discount_20off",
+    "analysis_period": {
+      "start": "2026-08-01",
+      "end": "2026-08-31"
+    }
+  },
+  "creative_core": {
+    "format": "static_image",
+    "primary_text": "夏の終わりの大セール！全品20%OFF。限定期間、今しか手に入らない。",
+    "headline": "期間限定20%OFF 今すぐ購入",
+    "call_to_action": "詳しく見る",
+    "ai_labels": {
+      "hook_type": "discount",
+      "appeal_axis": "price",
+      "target_audience": "cart_abandoners",
+      "emotion": "urgency",
+      "tone": "casual"
+    },
+    "platform_specific": {
+      "placement": "ig_feed",
+      "objective": "OUTCOME_SALES",
+      "budget": 80000
+    }
+  },
+  "landing_page": {
+    "url": "https://example.com/summer_sale_2026",
+    "fv_copy": "サマーセール開催中！全品20%OFF",
+    "offer": "20%割引クーポンコード：SUMMER20",
+    "form_difficulty": "low",
+    "match_score_with_ad": 0.95
+  },
+  "performance": {
+    "impressions": 280000,
+    "clicks": 8400,
+    "ctr": 0.03,
+    "spend": 80000,
+    "conversions": 320,
+    "cpa": 250,
+    "cvr": 0.038,
+    "reach": 220000,
+    "frequency": 1.27,
+    "roas": 4.2
+  },
+  "diagnostics": {
+    "creative_fatigue_risk": "low",
+    "performance_status": "excellent",
+    "lp_message_match_risk": "low",
+    "recommended_actions": [
+      "現在のクリエイティブは極めて好調です（CPA 250円は業界水準を大幅に下回っています）。",
+      "予算をさらに10-20%増額し、リーチ拡大を検討してください。",
+      "同じ訴求軸で動画フォーマット（15秒リール）のテストを推奨します。"
+    ]
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Excellent",
+      "key_metric_highlight": "CPAが目標より70%低く、ROAS 4.2倍を達成"
+    },
+    "performance_ranking": "Top 5%",
+    "trend_indicator": "↑ +32% (前月比)"
+  },
+  "_metadata": {
+    "generated_at": "2026-09-01T10:00:00Z",
+    "data_source": "meta_graph_api",
+    "ai_model_version": "gemini-2.0",
+    "version": "1.0"
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "asset_meta": {
+    "ad_id": "ad_556677889_fatigue",
+    "platform": "meta",
+    "campaign_name": "Spring_Campaign_2026",
+    "adset_name": "Website_Visitors_60d",
+    "ad_name": "Video_Testimonial_Original",
+    "analysis_period": {
+      "start": "2026-05-01",
+      "end": "2026-08-31"
+    }
+  },
+  "creative_core": {
+    "format": "video",
+    "primary_text": "お客様の声：このサービスで人生が変わった。今すぐ無料体験。",
+    "headline": "顧客満足度99%のサービス",
+    "call_to_action": "今すぐ申し込む",
+    "ai_labels": {
+      "hook_type": "customer_testimonial",
+      "appeal_axis": "transformation",
+      "target_audience": "new_users",
+      "emotion": "inspiration",
+      "tone": "professional"
+    },
+    "platform_specific": {
+      "placement": "fb_feed",
+      "objective": "OUTCOME_LEADS",
+      "budget": 120000
+    }
+  },
+  "landing_page": {
+    "url": "https://example.com/free_trial_signup",
+    "fv_copy": "無料体験版を今すぐ開始",
+    "offer": "初回7日間無料",
+    "form_difficulty": "medium",
+    "match_score_with_ad": 0.72
+  },
+  "performance": {
+    "impressions": 1200000,
+    "clicks": 18000,
+    "ctr": 0.015,
+    "spend": 120000,
+    "conversions": 180,
+    "cpa": 667,
+    "cvr": 0.01,
+    "reach": 980000,
+    "frequency": 1.22,
+    "roas": 0.9
+  },
+  "diagnostics": {
+    "creative_fatigue_risk": "high",
+    "performance_status": "poor",
+    "lp_message_match_risk": "medium",
+    "recommended_actions": [
+      "このクリエイティブは 4ヶ月以上の配信実績があり、深刻なクリエイティブ疲弊が疑われます（CTR 1.5% は初期比較時の半分以下）。",
+      "新しいクリエイティブ素材への切り替えを至急推奨。今後のテスト案：",
+      "1) 異なるテーマの顧客インタビュー（複数人のストーリー）",
+      "2) プロダクト機能を強調した実演動画",
+      "3) 社員によるナレーション版（親近感路線）",
+      "ランディングページのメッセージ（『無料体験』）と広告の訴求（『人生が変わった』）のズレも修正してください。"
+    ]
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Poor",
+      "key_metric_highlight": "クリエイティブ疲弊検出、CPA 667円（基準以上）、ROAS 0.9倍"
+    },
+    "performance_ranking": "Bottom 20%",
+    "trend_indicator": "↓ -58% (初月比)"
+  },
+  "_metadata": {
+    "generated_at": "2026-09-01T10:00:00Z",
+    "data_source": "meta_graph_api",
+    "ai_model_version": "gemini-2.0",
+    "version": "1.0"
+  }
+}

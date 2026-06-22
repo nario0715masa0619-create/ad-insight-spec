@@ -1,0 +1,78 @@
+{
+  "asset_meta": {
+    "ad_id": "ad_223344556_lp_issue",
+    "platform": "meta",
+    "campaign_name": "BF2026_Early_Bird",
+    "adset_name": "Cold_Audience_Japan",
+    "ad_name": "Image_Carousel_Electronics",
+    "analysis_period": {
+      "start": "2026-08-15",
+      "end": "2026-08-31"
+    }
+  },
+  "creative_core": {
+    "format": "carousel_image",
+    "primary_text": "限定50台！最新型スマートフォン激安セール。他では絶対に見つからないこの価格。",
+    "headline": "新型スマホ 50%OFF",
+    "call_to_action": "今すぐ購入",
+    "ai_labels": {
+      "hook_type": "discount",
+      "appeal_axis": "price",
+      "target_audience": "price_conscious",
+      "emotion": "urgency",
+      "tone": "aggressive"
+    },
+    "platform_specific": {
+      "placement": "fb_feed",
+      "objective": "OUTCOME_SALES",
+      "budget": 50000
+    }
+  },
+  "landing_page": {
+    "url": "https://example.com/electronics_category",
+    "fv_copy": "電化製品カテゴリーへようこそ",
+    "offer": "会員登録で初回10%OFF",
+    "form_difficulty": "high",
+    "match_score_with_ad": 0.35
+  },
+  "performance": {
+    "impressions": 156000,
+    "clicks": 4680,
+    "ctr": 0.03,
+    "spend": 50000,
+    "conversions": 42,
+    "cpa": 1190,
+    "cvr": 0.009,
+    "reach": 130000,
+    "frequency": 1.2,
+    "roas": 0.6
+  },
+  "diagnostics": {
+    "creative_fatigue_risk": "low",
+    "performance_status": "fair",
+    "lp_message_match_risk": "high",
+    "recommended_actions": [
+      "このキャンペーンは高いクリック率（3%）を達成していますが、コンバージョン率が極めて低く（0.9%）、LP離脱リスクが高いです。",
+      "原因：広告では『限定50台の新型スマホ 50%OFF』と強調していますが、ランディングページは『電化製品カテゴリーページ』で、対象商品が明確にされていません。",
+      "改善案：",
+      "1) 新型スマートフォン専用ランディングページを作成",
+      "2) LP のファーストビューで『新型スマホ 50%OFF キャンペーン』を明記",
+      "3) フォームステップを簡略化（会員登録→購入フローを確認し、不要な項目を削除）",
+      "4) カウントダウンタイマー（残り在庫・残り時間）をLPに表示して、広告の緊急性を強化"
+    ]
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Fair",
+      "key_metric_highlight": "LP メッセージ不一致検出、CTR高いがCVR低い（0.9%）"
+    },
+    "performance_ranking": "Low (Bottom 30%)",
+    "trend_indicator": "→ 0% (安定・横ばい)"
+  },
+  "_metadata": {
+    "generated_at": "2026-09-01T10:00:00Z",
+    "data_source": "meta_graph_api",
+    "ai_model_version": "gemini-2.0",
+    "version": "1.0"
+  }
+}
