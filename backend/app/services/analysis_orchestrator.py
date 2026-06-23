@@ -134,13 +134,10 @@ class AnalysisOrchestrator:
         - Extract video/image/text metadata
         - Prepare asset_meta section
         """
-        # TODO: Import and call MetadataService
-        # from app.services.metadata_service import MetadataService
-        # service = MetadataService()
-        # self.metadata = service.execute(self.ingested_asset)
-        
-        # Placeholder mock
-        self.metadata = {"asset_id": "asset_mock"}
+        # Import and call MetadataService
+        from app.services.metadata_service import MetadataService
+        service = MetadataService()
+        self.metadata = service.execute(self.ingested_asset)
         
         if not self.metadata:
             raise ProcessingError("Metadata extraction failed")
