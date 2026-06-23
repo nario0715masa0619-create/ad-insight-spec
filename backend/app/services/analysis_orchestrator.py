@@ -148,12 +148,41 @@ class AnalysisOrchestrator:
         
         Responsibilities:
         - Extract video frames (if video)
-        - OCR text (if image)
+        - OCR text (if image - currently mock)
         - Parse LP (if LP provided)
         
         Can be parallelized in future with ThreadPoolExecutor.
         """
+        from app.services.video_service import VideoService
+        from app.services.ocr_service import OCRService
         from app.services.lp_service import LPService
+        
+        # Extract video frames if input is video
+        if self.ingested_asset and self.ingested_asset.get("format") == "video_static":
+            try:
+                video_service = VideoService(num_frames=5)
+                # Assume ingested_asset has file_path
+                video_file_path = self.ingested_asset.get("file_path")
+                if video_file_path:
+                    self.video_result = video_service.execute(video_file_path)
+                    self.logger.info("Video processing successful")
+                    # Cleanup temp files
+                    video_service.cleanup()
+            except Exception as e:
+                self.logger.warning(f"Video processing failed (non-fatal): {str(e)}")
+                self.video_result = {"success": False, "message": str(e)}
+        else:
+            self.video_result = {}
+        
+        # OCR (currently mock implementation - will be upgraded Phase 2)
+        try:
+            ocr_service = OCRService(engine="mock")
+            # Placeholder - would need actual image paths in future
+            self.ocr_result = ocr_service.execute("dummy_path")
+            self.logger.info("OCR processing complete (mock)")
+        except Exception as e:
+            self.logger.warning(f"OCR processing failed (non-fatal): {str(e)}")
+            self.ocr_result = {"success": False, "message": str(e)}
         
         # Parse LP if provided
         if self.lp_input:
@@ -167,11 +196,7 @@ class AnalysisOrchestrator:
         else:
             self.lp_result = {}
         
-        # Placeholder: Mock results for Video and OCR (will be implemented later)
-        self.video_result = {"frames": [], "duration_seconds": None}
-        self.ocr_result = {"text": "", "confidence": 0.0}
-        
-        self.logger.info("Content analysis complete (LP parsed, Video/OCR mocked)")
+        self.logger.info("Content analysis complete (Video/OCR/LP)")
 
     def _step_llm(self) -> None:
         """
