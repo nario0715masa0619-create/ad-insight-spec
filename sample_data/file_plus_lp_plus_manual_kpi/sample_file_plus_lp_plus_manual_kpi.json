@@ -1,0 +1,194 @@
+{
+  "input_metadata": {
+    "mode": "file_plus_lp_plus_manual_kpi",
+    "source_type": "local_file",
+    "input_timestamp": "2026-06-23T14:00:00Z",
+    "file_paths": {
+      "creative_video": "/downloads/campaign_video_60s.mp4",
+      "creative_images": [
+        "/downloads/carousel_img1.png",
+        "/downloads/carousel_img2.png"
+      ],
+      "landing_page_html": "/downloads/lp_campaign.html"
+    }
+  },
+  "asset_meta": {
+    "asset_id": "asset_20260623_140000_local_campaign01",
+    "asset_name": "Summer Campaign - Video + Carousel",
+    "platform": "unknown",
+    "campaign_name": "Summer Mega Sale 2026",
+    "adset_name": "Conversion - Ecommerce",
+    "ad_name": "Video: Limited Time Offer",
+    "analysis_period": {
+      "start": "2026-06-01",
+      "end": "2026-06-22"
+    },
+    "external_ids": null
+  },
+  "creative_core": {
+    "format": "video_static",
+    "duration_seconds": 60,
+    "primary_text": "夏のセール開始！限定オファー最大70%OFF。在庫限定、今だけの大チャンス。",
+    "headline": "夏のセール開始",
+    "body_text": "最大70%OFF。限定在庫のため、急いでチェック。送料無料で今すぐ注文。",
+    "call_to_action": "今すぐショッピング",
+    "visual_elements": {
+      "dominant_colors": ["#FF4444", "#FFDD00", "#FFFFFF"],
+      "detected_objects": ["clothing", "sale_badge", "limited_offer_label", "shopping_cart"],
+      "text_overlay_detected": true,
+      "brand_elements": true
+    },
+    "tone_and_emotion": {
+      "primary_tone": "urgent",
+      "detected_emotion": ["excitement", "scarcity", "energy"],
+      "target_audience_inferred": "18-45, ecommerce shoppers, deal seekers, fashion enthusiasts"
+    },
+    "ai_labels": {
+      "hook_type": "scarcity",
+      "appeal_type": "emotional",
+      "identified_pain_points": ["high_prices", "limited_availability", "fomo"],
+      "identified_benefits": ["massive_discount_70percent", "free_shipping", "limited_stock_urgency"]
+    },
+    "platform_specific": null
+  },
+  "landing_page": {
+    "url": "https://example.com/summer-sale-2026",
+    "fv_copy": "夏のセール開始！最大70%OFF。限定在庫、今だけ。",
+    "fv_headline": "夏のセール開始",
+    "offer": "最大70%OFF + 送料無料",
+    "form_difficulty": "low",
+    "form_field_count": 2,
+    "cta_button_text": "ショップを見る",
+    "message_consistency": {
+      "match_score": 0.95,
+      "consistency_basis": "広告『最大70%OFF』『限定在庫』『今だけ』とLP『最大70%OFF』『限定在庫』『今だけ』が完全一致。『緊迫感・興奮・限定感』のトーンも統一。CTA『ショッピング』『ショップを見る』も同一意図。メッセージ整合性が非常に高い。",
+      "key_alignment_points": [
+        "70%OFF の数値（完全一致）",
+        "限定在庫（両方で強調）",
+        "『今だけ』のスケアシティ訴求（統一）",
+        "トーン『緊迫・興奮』（統一）"
+      ],
+      "mismatch_areas": [],
+      "analyzed_at": "2026-06-23T14:05:00Z"
+    },
+    "lp_page_structure": {
+      "has_hero_section": true,
+      "has_social_proof": true,
+      "has_faq_section": false,
+      "estimated_scroll_depth_for_form": "above_fold"
+    }
+  },
+  "performance": {
+    "impressions": 125000,
+    "clicks": 6250,
+    "ctr": 0.05,
+    "spend": 312500,
+    "conversions": 312,
+    "conversion_value": 2496000,
+    "cpa": 1000,
+    "cvr": 0.05,
+    "roas": 8.0,
+    "reach": 100000,
+    "frequency": 1.25
+  },
+  "diagnostics": {
+    "qualitative": {
+      "creative_fatigue_risk": "low",
+      "creative_fatigue_basis": "フック『最大70%OFF』『限定在庫』は数値ベース＋スケアシティで強力。『今だけ』という時間限定訴求は緊迫感を生成。ビジュアルも『赤×黄×白』の高コントラスト配色で注視性が高く、『セールバッジ』『限定ラベル』が視覚的に強調。一般的な表現ではなく、『70%』『限定在庫』という具体数値で差別化されている。オーバーレイテキストは最小限でインパクト重視。",
+      "creative_fatigue_indicators": [],
+      "message_clarity_score": 0.96,
+      "message_clarity_basis": "広告：課題『高い』『なくなる』→ 解決『70%OFF』『在庫あり』→ 行動『ショッピング』。3段ロジックが明確。LP：『最大70%OFF』『限定在庫』『今だけ』の3キーワードで統一。フォーム項目 2 個でミニマル化。全体としてメッセージ訴求が非常にシンプルで明確。",
+      "lp_message_match_risk": "low",
+      "lp_message_match_basis": "広告『最大70%OFF』『限定在庫』『今だけ』とLP『最大70%OFF』『限定在庫』『今だけ』が 100% 一致。トーン『緊迫・興奮』も統一。CTA『ショッピング』『ショップを見る』も同一意図。メッセージ整合性が非常に高い（スコア 95%）。",
+      "form_usability_concern": "low",
+      "form_usability_basis": "フォーム項目 2 個（メール・郵便番号）で ec サイトの lowest friction を実現。『above fold』配置で即座に入力可能。商品への scroll を遮らず、『今すぐ購入』の心理的障壁を最小化。",
+      "audience_relevance_concern": "low",
+      "audience_relevance_basis": "ターゲット『18-45, ショッピング好き・ディール追求層』と訴求『最大70%OFF』『限定』『今だけ』が完全合致。ビジュアル『ファッションアイテム』『ショッピングカート』がペルソナと一致。スケアシティ・時間限定訴求は、deal seeker 層のトリガー。",
+      "recommended_creative_improvements": [
+        "顧客評価・レビューの組み込み：『★4.8 /5 (1,234件)』といった社会証明を動画に入れると信頼度が +5～8% 向上",
+        "配送情報の明示化：『送料無料』『翌日配送』のような配送保証をまとめ記載するとチェックアウト率が +2～3% 改善",
+        "在庫数の可視化：『残り 234 点』のようなリアルタイム在庫表示をLP に追加するとスケアシティ効果が強化"
+      ]
+    },
+    "quantitative": {
+      "performance_status": "excellent",
+      "performance_status_basis": "CTR 5.0%（業界平均 1.5% の 3.3 倍）、CVR 5.0%（業界平均 2.5% の 2 倍）、ROAS 8.0x（目標 3.0x の 2.67 倍達成）。全指標が業界ベンチマークを大幅に上回り、このクリエイティブは高い効果性を実証している。",
+      "ctr_assessment": "excellent",
+      "ctr_benchmark_comparison": "業界平均 1.5% に対し 5.0% → 333% (3.3 倍) の性能",
+      "cvr_assessment": "excellent",
+      "cvr_benchmark_comparison": "業界平均 2.5% に対し 5.0% → 200% (2 倍) の性能",
+      "roas_assessment": "excellent",
+      "roas_benchmark_comparison": "目標 ROAS 3.0x に対し 8.0x → 267% 達成。投資利益率が目標を大幅に超過。",
+      "efficiency_score": 0.91,
+      "recommended_optimizations": [
+        "スケール：このクリエイティブは圧倒的に高性能。予算を 50～100% 増加させてスケール展開を推奨。ROAS 8.0x は持続可能性が高い。",
+        "類似オーディエンス展開：高パフォーマンスを実現した既存顧客の『類似オーディエンス』ターゲティングで、新規リーチ +30～50% を期待。",
+        "長期キャンペーン化：『サマーセール』は季節限定であるため、終了 1 週間前から秋セール・冬セールへの段階的シフトを計画。在庫・オファーの入れ替えで持続的な高パフォーマンス維持が可能。",
+        "クリエイティブA/B テスト：スケーリング前に『70% OFF』vs『送料無料 + 15% OFF』等の別オファーパターンを小規模で検証。現在の 8.0x ROAS をさらに改善の可能性。"
+      ]
+    }
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Excellent",
+      "key_metric_highlight": "CTR 5.0% (3.3x) | CVR 5.0% (2x) | ROAS 8.0x | Message Alignment 95%",
+      "status_color": "#00AA00"
+    },
+    "performance_ranking": "Top 5%",
+    "trend_indicator": "+42%",
+    "creative_fatigue_visual": "● Low",
+    "lp_match_visual": "✓ Aligned",
+    "recommended_actions_display": [
+      {
+        "priority": "high",
+        "action": "スケーリング：このクリエイティブで予算を 50～100% 増加（312.5万 → 500～600万円）",
+        "expected_impact": "ROAS 8.0x を維持、総売上 +50～100%"
+      },
+      {
+        "priority": "high",
+        "action": "類似オーディエンス展開：高パフォーマンス顧客の LookAlike ターゲティング",
+        "expected_impact": "新規リーチ +30～50%、CVR 維持"
+      },
+      {
+        "priority": "medium",
+        "action": "顧客評価・レビューを動画に組み込み（『★4.8/5』など）",
+        "expected_impact": "信頼度向上、CVR +2～3%"
+      },
+      {
+        "priority": "medium",
+        "action": "在庫数表示（『残り 234 点』）をLP に追加",
+        "expected_impact": "スケアシティ効果強化、CVR +1～2%"
+      },
+      {
+        "priority": "low",
+        "action": "秋セールへの段階的シフト計画：オファーやビジュアルを季節に合わせてローテーション",
+        "expected_impact": "長期的なクリエイティブ疲労を遅延"
+      }
+    ]
+  },
+  "_metadata": {
+    "generated_at": "2026-06-23T14:30:00Z",
+    "data_source": "local_file",
+    "ai_model_version": "gemini-2.0-flash",
+    "json_schema_version": "v0.2",
+    "input_mode": "file_plus_lp_plus_manual_kpi",
+    "analysis_tools_used": {
+      "ocr_engine": "google_vision",
+      "video_frame_extractor": "ffmpeg",
+      "web_scraper": "beautifulsoup"
+    },
+    "processing_time_ms": 5600,
+    "validation_status": "passed",
+    "validation_notes": [
+      "Video format: MP4 (H.264, 1080p, 30fps) - OK",
+      "Video duration: 60s (within limits) - OK",
+      "Carousel images: 2 images detected - OK",
+      "LP reachable and parsed successfully - OK",
+      "KPI data validation: All required fields present - OK",
+      "CTR > 3% (excellent range) - OK",
+      "CVR > 4% (excellent range) - OK",
+      "ROAS > 5x (excellent range) - OK",
+      "Analysis complete: All diagnostics generated successfully"
+    ]
+  }
+}

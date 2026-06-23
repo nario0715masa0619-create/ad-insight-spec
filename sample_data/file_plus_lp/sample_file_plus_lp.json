@@ -1,0 +1,152 @@
+{
+  "input_metadata": {
+    "mode": "file_plus_lp",
+    "source_type": "local_file",
+    "input_timestamp": "2026-06-23T11:15:00Z",
+    "file_paths": {
+      "creative_video": "/downloads/product_demo_45s.mp4",
+      "creative_images": null,
+      "landing_page_html": "/downloads/lp_snapshot.html"
+    }
+  },
+  "asset_meta": {
+    "asset_id": "asset_20260623_111500_local_product01",
+    "asset_name": "Product Demo - 45s Version",
+    "platform": "unknown",
+    "campaign_name": "Product Launch Q3 2026",
+    "adset_name": "Consideration - Tech-savvy",
+    "ad_name": "Demo: How It Works",
+    "analysis_period": {
+      "start": null,
+      "end": null
+    },
+    "external_ids": null
+  },
+  "creative_core": {
+    "format": "video_static",
+    "duration_seconds": 45,
+    "primary_text": "わずか3ステップで、プロレベルのランディングページが完成。コーディング知識ゼロでもOK。",
+    "headline": "3ステップで完成",
+    "body_text": "1. テンプレート選択 → 2. テキスト・画像入力 → 3. 公開。デザイン知識は不要。成約率が平均150%向上。",
+    "call_to_action": "デモを見る",
+    "visual_elements": {
+      "dominant_colors": ["#0066CC", "#FFFFFF", "#00CC66"],
+      "detected_objects": ["computer_screen", "mouse_click", "progress_indicator", "checkmark"],
+      "text_overlay_detected": true,
+      "brand_elements": true
+    },
+    "tone_and_emotion": {
+      "primary_tone": "professional",
+      "detected_emotion": ["trust", "confidence", "clarity"],
+      "target_audience_inferred": "25-50, business decision makers, marketing managers, tech-savvy"
+    },
+    "ai_labels": {
+      "hook_type": "benefit",
+      "appeal_type": "rational",
+      "identified_pain_points": ["setup_complexity", "design_skills_needed", "time_investment"],
+      "identified_benefits": ["simple_3step_process", "no_design_knowledge_required", "proven_results"]
+    },
+    "platform_specific": null
+  },
+  "landing_page": {
+    "url": "https://example.com/lp/product-demo-q3",
+    "fv_copy": "3ステップでプロレベルのLP完成。コーディングスキル不要。成約率が平均150%向上。",
+    "fv_headline": "3ステップでプロレベルのLP完成",
+    "offer": "初月50%割引 + 30日間無料トライアル",
+    "form_difficulty": "low",
+    "form_field_count": 4,
+    "cta_button_text": "今すぐ始める",
+    "message_consistency": {
+      "match_score": 0.88,
+      "consistency_basis": "広告文『3ステップ』『コーディング知識ゼロ』『成約率150%向上』とLP『3ステップでプロレベル』『コーディングスキル不要』『成約率150%向上』が高度に一致。トーン『シンプル・信頼』も統一。ただし、LP では『初月50%割引』というオファーが広告には明示されていない点で若干のズレ（88%）。",
+      "key_alignment_points": [
+        "3ステッププロセス（両方で言及）",
+        "コーディング知識不要（両方で強調）",
+        "成約率向上の数値（150% で一致）",
+        "信頼・簡潔なトーン（統一）"
+      ],
+      "mismatch_areas": [
+        "初月割引オファーが広告では明示されていない（LP では目立つ）"
+      ],
+      "analyzed_at": "2026-06-23T11:20:00Z"
+    },
+    "lp_page_structure": {
+      "has_hero_section": true,
+      "has_social_proof": true,
+      "has_faq_section": true,
+      "estimated_scroll_depth_for_form": "above_fold"
+    }
+  },
+  "performance": null,
+  "diagnostics": {
+    "qualitative": {
+      "creative_fatigue_risk": "low",
+      "creative_fatigue_basis": "フック『3ステップで完成』『成約率150%向上』は具体的かつ実践的。『3ステップ』という数字が記憶性を高めている。ビジュアルでも『ステップ1→ステップ2→ステップ3』の進捗表示が明確で、テキストの訴求と視覚的に一致。オーバーレイテキストは最小限で読みやすい。",
+      "creative_fatigue_indicators": [],
+      "message_clarity_score": 0.91,
+      "message_clarity_basis": "広告：課題『複雑』『スキル必要』→ 解決『3ステップ』『スキル不要』→ 行動『デモを見る』の流れが明確。LP：『3ステップでプロレベル』『初月割引』の訴求が強く、フォーム項目4つは low friction を維持。全体としてメッセージ一貫性が高い。",
+      "lp_message_match_risk": "low",
+      "lp_message_match_basis": "広告『3ステップ』『成約率150%』とLP『3ステップでプロレベル』『成約率150%向上』が完全一致。トーン『シンプル・信頼』『プロフェッショナル』も統一。ただしLP は割引オファーを強調しており、広告では割引言及なし（スコア 88%）。",
+      "form_usability_concern": "low",
+      "form_usability_basis": "フォーム項目 4 個（名前・メール・企業・部署）は業界標準で low friction と評価。『above fold』配置により、スクロール不要で入力可能。CTA『今すぐ始める』はシンプル明確。フォーム直前に『成約率150%向上』の数値保証があり、心理的障壁も低い。",
+      "audience_relevance_concern": "low",
+      "audience_relevance_basis": "ターゲット『25-50, ビジネス意思決定者』と訴求『シンプル・信頼・実績』が高度に合致。動画内『PC 作業・click アクション』がデスクワーカーペルソナと一致。『成約率数値保証』『3ステップシンプル化』は、忙しいマネージャー層のニーズに直結。",
+      "recommended_creative_improvements": [
+        "割引オファーの明示化：LP では『初月50%割引』が目立つが、動画では言及なし。広告内で割引オファー（『初月50%割引適用』）を明示すると、メッセージ整合性が向上し、CVR が 3～5% 改善の可能性",
+        "顧客導入事例の追加：『〇〇企業が導入後、成約率 120% → 300% に改善』といった具体的な事例を入れると信頼度が +8～12% 向上",
+        "動画長最適化テスト：現在 45s だが、30s 版でも同等の訴求が可能か A/B テストを推奨（結果次第で媒体別配信最適化）"
+      ]
+    },
+    "quantitative": null
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Good",
+      "key_metric_highlight": "Message Consistency: 88% | LP Fit: High | Creative Fatigue: Low",
+      "status_color": "#FFAA00"
+    },
+    "performance_ranking": null,
+    "trend_indicator": null,
+    "creative_fatigue_visual": "● Low",
+    "lp_match_visual": "⚠ Partial",
+    "recommended_actions_display": [
+      {
+        "priority": "high",
+        "action": "割引オファーを動画内で明示：『初月50%割引』を CTA 周辺に表示",
+        "expected_impact": "メッセージ整合性 88% → 95%、CVR +3～5%"
+      },
+      {
+        "priority": "medium",
+        "action": "顧客事例を追加：『〇〇企業が導入後、成約率 3倍に』といった実績を動画内に組み込む",
+        "expected_impact": "信頼度向上 → CTR +5～8%"
+      },
+      {
+        "priority": "medium",
+        "action": "30s 版での A/B テスト：現 45s を 30s に短縮しても訴求可能か検証",
+        "expected_impact": "媒体別配信最適化（Instagram Stories など）"
+      }
+    ]
+  },
+  "_metadata": {
+    "generated_at": "2026-06-23T11:22:00Z",
+    "data_source": "local_file",
+    "ai_model_version": "gemini-2.0-flash",
+    "json_schema_version": "v0.2",
+    "input_mode": "file_plus_lp",
+    "analysis_tools_used": {
+      "ocr_engine": "google_vision",
+      "video_frame_extractor": "ffmpeg",
+      "web_scraper": "beautifulsoup"
+    },
+    "processing_time_ms": 4200,
+    "validation_status": "passed",
+    "validation_notes": [
+      "Video format: MP4 (H.264, 1080p, 30fps) - OK",
+      "Video duration: 45s (within limits) - OK",
+      "LP URL reachable: Yes - OK",
+      "LP form fields: 4 (low friction) - OK",
+      "Message consistency analysis: Passed (88% match)",
+      "HTML structure: Valid, hero + social proof + FAQ - OK"
+    ]
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "input_metadata": {
+    "mode": "file_only",
+    "source_type": "local_file",
+    "input_timestamp": "2026-06-23T10:30:00Z",
+    "file_paths": {
+      "creative_video": "/downloads/summer_promo_video_30s.mp4",
+      "creative_images": null,
+      "landing_page_html": null
+    }
+  },
+  "asset_meta": {
+    "asset_id": "asset_20260623_103000_local_summer01",
+    "asset_name": "Summer Promotion - 30s Video",
+    "platform": "unknown",
+    "campaign_name": "Summer 2026 Campaign",
+    "adset_name": "Awareness - Ages 18-45",
+    "ad_name": "Video: Time-saving Solution",
+    "analysis_period": {
+      "start": null,
+      "end": null
+    },
+    "external_ids": null
+  },
+  "creative_core": {
+    "format": "video_static",
+    "duration_seconds": 30,
+    "primary_text": "あなたの時間を取り戻す。LP作成もAIが自動。成約率2倍を実現するプラットフォーム。",
+    "headline": "あなたの時間を取り戻す",
+    "body_text": "LP作成にかかる時間は最短2分。デザイン知識は不要。今すぐ無料で試す。",
+    "call_to_action": "無料で試す",
+    "visual_elements": {
+      "dominant_colors": ["#FF6B6B", "#FFFFFF", "#2C3E50"],
+      "detected_objects": ["laptop", "person_working", "checkmark", "clock"],
+      "text_overlay_detected": true,
+      "brand_elements": true
+    },
+    "tone_and_emotion": {
+      "primary_tone": "inspirational",
+      "detected_emotion": ["excitement", "trust", "urgency"],
+      "target_audience_inferred": "18-45, entrepreneurs, marketing professionals, time-conscious"
+    },
+    "ai_labels": {
+      "hook_type": "benefit",
+      "appeal_type": "emotional",
+      "identified_pain_points": ["time_consuming", "technical_complexity", "high_cost"],
+      "identified_benefits": ["saves_time", "easy_to_use", "cost_effective", "faster_results"]
+    },
+    "platform_specific": null
+  },
+  "landing_page": null,
+  "performance": null,
+  "diagnostics": {
+    "qualitative": {
+      "creative_fatigue_risk": "low",
+      "creative_fatigue_basis": "フック『成約率2倍』『AI自動化』は具体的で新規性が高い。ビジュアルは高コントラスト（赤×白×紺）で視認性良好。オーバーレイテキストはシンプルで読みやすい。一般的すぎる表現なし。動画では時間経過のビジュアル（砂時計など）を活用し、『時間短縮』メッセージが強調されている。",
+      "creative_fatigue_indicators": [],
+      "message_clarity_score": 0.93,
+      "message_clarity_basis": "FV『あなたの時間を取り戻す』で課題提示 → 本文『LP作成も2分』『デザイン知識不要』で解決策提示 → CTA『無料で試す』で行動促進。3段階の流れが明確で一貫性あり。主訴求『時間短縮』『簡単』『成果向上』が動画全体で一貫して表現されている。ただし『成約率2倍』の根拠がやや不明確（業界平均値との比較が見えない）。",
+      "lp_message_match_risk": null,
+      "lp_message_match_basis": null,
+      "form_usability_concern": null,
+      "form_usability_basis": null,
+      "audience_relevance_concern": "low",
+      "audience_relevance_basis": "ターゲット『18-45, 起業家・マーケター』と訴求『時間短縮・簡単・成果』が高度に合致。動画内の『仕事中のビジネスパーソン』ビジュアルがターゲットペルソナと一致。『LP作成という実務的なペイン』にダイレクトに対応。",
+      "recommended_creative_improvements": [
+        "社会証明強化：『導入企業1000社以上』『平均成約率UP 150%』など、数値ベースの信頼度向上が可能",
+        "オファー明示化：『今なら30日間無料』『初月50%割引』等のオファーを動画内で明示するとCVR向上の可能性",
+        "顧客の声：実際の利用者コメント（『開発時間90%削減』等）を入れるとスケーラビリティ感が高まる"
+      ]
+    },
+    "quantitative": null
+  },
+  "views": {
+    "dashboard_summary": {
+      "status_label": "Good",
+      "key_metric_highlight": "Creative Fatigue: Low | Message Clarity: 93% | Audience Fit: High",
+      "status_color": "#FFAA00"
+    },
+    "performance_ranking": null,
+    "trend_indicator": null,
+    "creative_fatigue_visual": "● Low",
+    "lp_match_visual": null,
+    "recommended_actions_display": [
+      {
+        "priority": "medium",
+        "action": "社会証明要素を追加：導入企業数や顧客評価を動画内で表示",
+        "expected_impact": "信頼度向上 → CTR +5～8%"
+      },
+      {
+        "priority": "medium",
+        "action": "オファー明示化：『30日無料』『初月割引』をCTA周辺に配置",
+        "expected_impact": "緊迫感向上 → CVR +3～5%"
+      },
+      {
+        "priority": "low",
+        "action": "A/B テスト：別パターンの hook（『業界No.1の速さ』vs『成約率2倍』）でテスト",
+        "expected_impact": "最適な hook 選定"
+      }
+    ]
+  },
+  "_metadata": {
+    "generated_at": "2026-06-23T10:35:00Z",
+    "data_source": "local_file",
+    "ai_model_version": "gemini-2.0-flash",
+    "json_schema_version": "v0.2",
+    "input_mode": "file_only",
+    "analysis_tools_used": {
+      "ocr_engine": "google_vision",
+      "video_frame_extractor": "ffmpeg",
+      "web_scraper": null
+    },
+    "processing_time_ms": 2800,
+    "validation_status": "passed",
+    "validation_notes": [
+      "Video format: MP4 (H.264, 1080p, 24fps) - OK",
+      "Video duration: 30s (within limits) - OK",
+      "Audio transcript: Available (JP) - OK",
+      "Text overlay detected: 8 frames with text - OK",
+      "Creative fatigue analysis: Passed (low risk)"
+    ]
+  }
+}

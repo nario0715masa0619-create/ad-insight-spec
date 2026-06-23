@@ -1,162 +1,98 @@
-# 実装フェーズ計画 - Ad-Insight-Spec
+# 実装フェーズ計画 - Ad-Insight-Spec（改訂版）
 
-## 概要
+**Last Updated**: 2026-06-22  
+**Strategy Shift**: Meta API-First → File-First
 
-本プロジェクトは4つのフェーズに分けて段階的に実装される。各フェーズの成果物と優先度は以下の通り。
+## 📌 戦略変更の背景
+
+### 従来の方針（Meta API-First）
+- Meta Graph API から広告データを取得
+- リアルタイム連携を前提
+- API 認証・レート制限が実装の複雑性
+
+### 新しい方針（File-First Strategy）
+- すでにダウンロード済みの素材ファイル（動画・画像）を入力
+- LPスクレイピングまたはマニュアル指定
+- 手入力KPI（optional）で診断を補強
+- **MVP の高速実装** + **将来の API 連携と整合**
+
+### なぜ File-First を優先するのか？
+
+1. **実装速度**: API 認証・ライセンス・レート制限なしで即座に開発可能
+2. **ユースケース**: マーケターが「既存広告素材の分析」を最初に求めている
+3. **設計の汎用性**: ファイル取込 → 分析 → JSON は Meta/Google/TikTok 全媒体に共通
+4. **運用効率**: 手元にある素材で検証でき、API 連携はその後に追加
+5. **テスト性**: 固定入力データで deterministic な動作確認
 
 ---
 
-## Phase 0: スキーマ・アーキテクチャ設計（基盤整備）
+## フェーズ再構成
 
-**目的**: 新JSONスキーマの確定とモジュール選定、開発基盤の構築
+### Phase 0: 基盤整備（✅ 完了）
+- JSON スキーマ v0.1
+- Pydantic + SQLAlchemy モデル
+- 環境変数管理
 
-**期間**: 1-2週間
+### Phase 1: File-First Ingestion & Creative Analysis（新規ゴール）
+
+**目的**: ファイル入力 → 構造化JSON生成 → 診断提示
 
 **成果物**:
-- ✅ リポジトリ初期セットアップ（本スクリプトで完了）
-- ✅ JSON スキーマドラフト（\docs/specs/ad_insight_json_schema_draft.md\）
-- ✅ システムアーキテクチャ図（\docs/architecture/system_overview.md\）
-- ✅ Python Pydantic モデル定義（backend/app/schemas）
-- ⏳ PostgreSQL テーブル設計（backend/app/models）
-- ⏳ GitHub Actions CI/CD 基本設定
+- Creative Analyzer（動画・画像からメタデータ抽出）
+- Landing Page Analyzer（LP からテキスト・訴求抽出）
+- Converter Service（raw data → ad_insight_spec JSON）
+- CLI または FastAPI エンドポイント（file upload）
+- sample input → ad_insight_spec 生成の完全フロー
 
-**主要タスク**:
-1. JSON スキーマの確定（ステークホルダーレビュー）
-2. PostgreSQL テーブル DDL 作成
-3. Pydantic リクエスト/レスポンススキーマ定義
-4. FastAPI と Vue.js の環境構築スクリプト作成
-5. Docker Compose の最小化（postgres + backend + frontend）
-
+**期間**: 2-3週間  
 **優先度**: 🔴 最高
 
+**入力**:
+Copy
+├─ Creative Asset（いずれか） │ ├─ 動画ファイル（.mp4, .mov等） │ ├─ 画像ファイル（.png, .jpg等） │ └─ テキスト（キャプション・見出し） ├─ Landing Page │ ├─ URL（スクレイピング）または │ └─ HTML/テキスト（マニュアル入力） └─ KPI（optional） ├─ impressions ├─ clicks ├─ conversions └─ spend
+
+Copy
+**出力**:
+{ "asset_meta": { asset_id, platform, creative_type, ... }, "creative_core": { ... with LLM-extracted labels }, "landing_page": { ... with message consistency analysis }, "performance": { ... if provided, else null/defaults }, "diagnostics": { ... always generated }, "views": { ... dashboard summary }, "_metadata": { ... processing info } }
+
+Copy
 **チェックリスト**:
-- [ ] JSON スキーマが全ステークホルダーで合意
-- [ ] PostgreSQL DDL が作成・レビュー完了
-- [ ] Pydantic モデルが実装可能な状態
-- [ ] ローカル開発環境が docker-compose で起動可能
+- [ ] Creative Asset の メタデータ抽出ロジック
+- [ ] 動画・画像・テキストの 3 フォーマット対応
+- [ ] LP スクレイピング & テキスト抽出
+- [ ] Creative Core の LLM ラベル抽出（Hook/Appeal/Emotion等）
+- [ ] LP Message Consistency スコア計算
+- [ ] KPI なしでも成立する diagnostics 生成
+- [ ] KPI 入力時の診断拡張ロジック
+- [ ] CLI / FastAPI エンドポイント
+- [ ] end-to-end テスト（sample input → JSON 出力）
 
 ---
 
-## Phase 1: Meta広告 + LP 単体分析コアの実装
+### Phase 2: UI / Reporting & Dashboard
 
-**目的**: 1つのMeta広告とLPのデータを入力し、JSONを出力するバッチ処理の構築
+**目的**: JSON データの可視化・レポート生成
+
+**成果物**:
+- Streamlit ダッシュボード
+- HTML/PDF レポート生成
+- Vue.js フロントエンド
 
 **期間**: 2-3週間
 
-**成果物**:
-- ✅ ダミーデータジェネレータ（\sample_data/\ に複数シナリオ）
-- ⏳ Meta Ads API クライアント実装
-- ⏳ クリエイティブ要素分解 (Converter層)
-  - Hook / Body / CTA の抽出
-  - LLM プロンプト実装
-- ⏳ LP スクレイピング & マッチング処理
-- ⏳ JSON 出力機能
-- ⏳ PostgreSQL への永続化（Repository パターン）
-- ⏳ pytest によるユニットテスト一式
-
-**主要実装ファイル**:
-Copy
-backend/ ├── app/ │ ├── api/ │ │ └── ads.py # 仮実装：/api/v1/ads エンドポイント │ ├── core/ │ │ └── config.py # LLM API Key、DB URL 設定 │ ├── models/ │ │ ├── ad.py # Ad ORM モデル │ │ └── ad_insight.py # AdInsight ORM モデル │ ├── schemas/ │ │ └── ad_insight.py # Pydantic: AdInsightSchema │ ├── services/ │ │ ├── meta_service.py # Meta API クライアント │ │ ├── converter_service.py # Converter層（要素抽出） │ │ ├── lp_service.py # LP スクレイピング │ │ └── llm_service.py # LLM プロンプト実行 │ ├── repositories/ │ │ └── ad_repository.py # Ad / AdInsight CRUD │ └── db/ │ ├── init.py │ ├── session.py # DB セッション管理 │ └── base.py # SQLAlchemy Base ├── tests/ │ ├── test_converter_service.py │ └── test_ad_repository.py └── requirements.txt # 依存ライブラリ（最小化）
-
-Copy
-**主要タスク**:
-1. FastAPI 基本アプリケーション初期化（uvicorn サーバー）
-2. PostgreSQL へのローカル接続確認
-3. Meta Ads API 認証・クライアント実装
-4. クリエイティブ要素分解ロジック（LLM プロンプト + 処理）
-5. LP スクレイピング（Beautiful Soup / Selenium）
-6. メッセージマッチスコア計算アルゴリズム
-7. JSON シリアライズ & 永続化
-8. エラーハンドリング・ロギング
-
-**外部依存**:
-- Meta Graph API クレデンシャル
-- Gemini / OpenAI API クレデンシャル
-
-**優先度**: 🔴 高
-
-**チェックリスト**:
-- [ ] Meta Ads API から1件のサンプル広告データを取得可能
-- [ ] クリエイティブ要素分解（Hook/Body/CTA）の精度 > 80%
-- [ ] LP スクレイピングが安定して動作
-- [ ] JSON 生成・永続化のエンドツーエンドテストがGREEN
-- [ ] ユニットテストカバレッジ > 70%
-
 ---
 
-## Phase 2: UI/レポート基盤の移植と連携
+### Phase 3: API Integration & Multi-Platform
 
-**目的**: Phase 1のJSONを読み込み、可視化するダッシュボードと静的レポートの構築
-
-**期間**: 2-3週間
+**目的**: Meta/Google/TikTok との API 連携
 
 **成果物**:
-- ⏳ Streamlit ダッシュボード（VIS資産の移植）
-  - 全体パフォーマンス タブ
-  - クリエイティブ分析 タブ
-  - LP一貫性診断 タブ
-  - AI改善提案 タブ
-- ⏳ HTML エグゼクティブサマリー レポート生成器
-- ⏳ Vue.js フロントエンド基本実装
-  - ページレイアウト
-  - API クライアント実装
-  - Pinia ストア基本設計
-- ⏳ FastAPI ← → Vue.js の通信確認
+- Meta Ads API クライアント
+- Google Ads API クライアント
+- TikTok Ads API クライアント（optional）
+- 媒体抽象化レイヤー
 
-**主要実装ファイル**:
-streamlit_app/ ├── app.py # Streamlit メインアプリケーション ├── pages/ │ ├── performance.py # 全体パフォーマンス │ ├── creative_analysis.py # クリエイティブ分析 │ ├── lp_consistency.py # LP一貫性診断 │ └── ai_recommendations.py # AI改善提案 ├── components/ │ ├── charts.py # グラフコンポーネント │ └── cards.py # サマリーカード └── utils/ ├── data_loader.py # JSON ローダー └── styling.py # Streamlit スタイリング
-
-backend/ ├── app/ │ └── api/ │ ├── ads.py # GET /api/v1/ads (JSON 取得) │ └── reports.py # POST /api/v1/reports/html (レポート生成)
-
-frontend/ ├── src/ │ ├── components/ │ │ ├── PerformanceCard.vue │ │ ├── CreativeBreakdown.vue │ │ └── LPConsistencyChart.vue │ ├── views/ │ │ ├── DashboardView.vue │ │ └── DetailView.vue │ ├── stores/ │ │ ├── adStore.js # Pinia store: 広告データ │ │ └── filterStore.js # Pinia store: フィルタ状態 │ ├── services/ │ │ └── apiClient.js # Axios ラッパー │ └── App.vue ├── package.json └── vite.config.js
-
-Copy
-**主要タスク**:
-1. Streamlit ページテンプレート作成
-2. VIS の report_generator.py をWeb広告向けに改修
-3. HTMLレポートテンプレート（CSS inline）設計
-4. Vue.js 環境構築（Vite）
-5. Pinia ストア設計（ad データ、フィルタ状態）
-6. API クライアント実装
-7. チャートライブラリ統合（Chart.js / ECharts）
-
-**優先度**: 🟠 中
-
-**チェックリスト**:
-- [ ] Streamlit が localhost:8501 で起動可能
-- [ ] 4つのタブすべてが基本機能を提供
-- [ ] HTMLレポートが1枚ペラで出力可能
-- [ ] Vue.js が localhost:5173 で起動可能
-- [ ] FastAPI ← → Vue.js 間の通信が正常
-
----
-
-## Phase 3: クロスプラットフォーム化準備（将来構想）
-
-**目的**: Google広告等の別媒体データを同スキーマにマッピングする検証
-
-**期間**: 3-4週間（今後）
-
-**成果物**:
-- ⏳ Google Ads API クライアント実装
-- ⏳ TikTok Ads API クライアント実装（オプション）
-- ⏳ 媒体抽象化レイヤー (Platform Adapter パターン)
-- ⏳ 複数媒体による比較UI
-- ⏳ ドキュメント更新（マルチプラットフォーム対応）
-
-**主要タスク**:
-1. Google Ads API 認証・クライアント実装
-2. Google Ads データ → ad_insight_spec マッピング
-3. Platform Adapter インターフェース設計
-4. 共通KPI ダッシュボード（複数媒体比較）
-5. E2E テスト（Meta + Google 両媒体）
-
-**優先度**: 🟢 低（将来）
-
-**チェックリスト**:
-- [ ] Google Ads データが同じJSONスキーマに正規化可能
-- [ ] Platform Adapter が拡張可能な設計
-- [ ] 複数媒体のダッシュボード表示がリアルタイム対応
+**期間**: 3-4週間
 
 ---
 
@@ -165,27 +101,176 @@ Copy
 | フェーズ | 期間 | 人員 | 成果 |
 |---------|------|------|------|
 | 0 | 1-2週 | 1-2名 | スキーマ確定、開発基盤 |
-| 1 | 2-3週 | 2-3名 | バッチ処理コア完成 |
+| **1** | **2-3週** | **2-3名** | **File-First 完全動作（サンプルから JSON 生成）** |
 | 2 | 2-3週 | 2-3名 | UI / レポート完成 |
 | 3 | 3-4週 | 1-2名 | マルチプラットフォーム検証 |
-| **合計** | **8-12週** | **平均2名** | **完全なMVP** |
+| **合計** | **8-12週** | **平均2名** | **完全な File-First MVP** |
 
 ---
 
-## リスク・外部依存
+## Phase 1 詳細設計
 
-### リスク
+### Input Models
 
-| リスク | 影響度 | 対策 |
-|-------|--------|------|
-| Meta API 変更 | 🔴 高 | API ドキュメント定期確認、サンドボックス環境での検証 |
-| LLM API コスト増加 | 🟠 中 | キャッシング機構、バッチ処理最適化 |
-| LP スクレイピング失敗率 | 🟠 中 | フォールバック処理、手動入力対応 |
-| PostgreSQL パフォーマンス | 🟡 低 | インデックス設計、クエリ最適化 |
+#### Creative Asset Input
 
-### 外部依存
+\\\
+asset_file: Union[VideoFile, ImageFile, TextFile]
+  - VideoFile: .mp4, .mov, .avi（メタデータ抽出、フレーム抽出）
+  - ImageFile: .png, .jpg, .webp（OCR、メタデータ）
+  - TextFile: .txt, .json（キャプション・見出し・テキスト）
 
-- Meta Graph API クレデンシャル（Phase 1）
-- Gemini / OpenAI API クレデンシャル（Phase 1）
-- PostgreSQL 15+ のローカル/クラウドインスタンス
-- Google Ads API クレデンシャル（Phase 3）
+metadata:
+  - filename (from file)
+  - format (video/image/text, inferred)
+  - size (bytes)
+  - duration (for video)
+  - dimensions (for image)
+  - detected_text (from OCR or raw text)
+\\\
+
+#### Landing Page Input
+
+\\\
+lp_input: Union[LPUrl, LPHtml, LPText]
+  - LPUrl: "https://example.com/sale" → スクレイピング
+  - LPHtml: raw HTML → テキスト抽出
+  - LPText: {fv_copy, offer, cta} → 直接入力
+
+extracted:
+  - url
+  - fv_copy (first view text)
+  - body_copy (main content)
+  - cta_text (call-to-action)
+  - offer_text (discount/offer description)
+  - form_fields (detected form complexity)
+\\\
+
+#### KPI Input (Optional)
+
+\\\
+kpi_optional:
+  - impressions: int
+  - clicks: int
+  - conversions: int
+  - spend: float
+  
+  if all provided:
+    ctr = clicks / impressions
+    cvr = conversions / clicks
+    cpa = spend / conversions
+    roas = revenue / spend (if revenue provided)
+  
+  if partial:
+    use provided values, leave others null
+  
+  if none provided:
+    performance = null
+    diagnostics generated based on creative/LP analysis only
+\\\
+
+---
+
+## KPI なしでも成立する診断範囲
+
+### Creative Analysis（KPI 不要）
+
+**LLM が生成可能**:
+- Hook Type（割引、ストーリー、UGC等）
+- Appeal Axis（価格、品質、便利性等）
+- Emotion（緊急性、楽しさ、信頼等）
+- Tone（カジュアル、フォーマル等）
+- Target Audience（推定ターゲット層）
+- Creative Fatigue Risk（素材の陳腐度推定）
+
+### LP Analysis（KPI 不要）
+
+**テキスト解析で生成可能**:
+- Message Consistency Score（広告と LP のメッセージズレ度）
+- Form Difficulty（フォーム複雑度）
+- CTA Clarity（CTA の明確さ）
+- Offer Clarity（オファーの明確さ）
+
+### Diagnostics（KPI 不要）
+
+**生成可能な提案**:
+- "Hook は効果的ですが、訴求軸が曖昧です"
+- "LP と広告のメッセージがズレています"
+- "フォームが複雑すぎる可能性があります"
+- "CTA が不明確です"
+
+### 制限事項
+
+**生成不可**（KPI 必須）:
+- CTR、CVR、CPA 実績値に基づく診断
+- パフォーマンス比較（「業界平均より 20% 低い」等）
+- ROAS の評価
+- 過去トレンド分析
+
+---
+
+## KPI 入力時の拡張
+
+\\\
+if kpi provided:
+  diagnostics += [
+    "CPA ¥{cpa} は {benchmark_range} です",
+    "CVR {cvr}% はターゲット {target_cvr}% に対して {status}",
+    "予算効率：ROAS {roas} に基づき、{recommendation}"
+  ]
+  
+  performance_status = evaluate(cpa, cvr, roas vs benchmarks)
+else:
+  diagnostics = creative + lp analysis only
+  performance_status = "insufficient_data"
+\\\
+
+---
+
+## File-First と API 連携の整合性
+
+### 現在（Phase 1: File-First）
+
+**入力源**:
+- ローカルファイル（動画・画像・テキスト）
+- LP URL またはテキスト
+- 手入力 KPI
+
+**パイプライン**:
+File Upload → Metadata Extract → LLM Analyze → Converter → JSON
+
+Copy
+### 将来（Phase 3: API Integration）
+
+**入力源追加**:
+- Meta Graph API → 広告素材・KPI 自動取得
+- Google Ads API → 広告データ自動取得
+- TikTok Ads API → 広告データ自動取得
+
+**パイプライン統合**:
+[File Upload] ┐ [Meta API] ├→ Normalized Raw Data → Metadata Extract → LLM Analyze → Converter → JSON [Google API] ├→ [TikTok API] ┘
+
+※ ファイル入力と API 入力の差別化なし （内部的には同じ Converter パイプラインを通す）
+
+Copy
+### 設計の汎用性
+
+**Media-Agnostic**:
+- asset_meta.platform（meta, google, tiktok等）で媒体を区別
+- platform_specific で各媒体特有フィールドを保持
+- 診断ロジックは platform に依存しない
+
+**Input-Agnostic**:
+- ファイル入力と API 入力の後段パイプラインが共通
+- 同じ Converter → JSON 生成処理
+
+---
+
+## 次に決めるべき論点（Phase 1 時点）
+
+1. **ビデオフレーム抽出**: 全フレーム vs サンプリング vs キーフレームのみ？
+2. **OCR 精度**: Tesseract vs Google Vision API？
+3. **LLM プロンプト設計**: 日本語・複数言語対応？
+4. **LP スクレイピング**: Selenium vs Beautiful Soup vs Playwright？
+5. **Performance Benchmark**: CPA/CVR/ROAS の「標準値」定義？
+6. **CLI vs FastAPI**: 開発の優先順位？
