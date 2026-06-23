@@ -84,7 +84,7 @@ class ConverterService(BaseService):
             input_metadata = self._populate_input_metadata(mode, ingestion_result)
             asset_meta = self._populate_asset_meta(metadata_result)
             creative_core = self._populate_creative_core(ingestion_result, metadata_result, llm_result)
-            landing_page = self._populate_landing_page(lp_result) if lp_result else None
+            landing_page = self._populate_landing_page(lp_result, llm_result) if lp_result else None
             performance = self._populate_performance(kpi_result) if kpi_result else None
             diagnostics = self._populate_diagnostics(llm_result, performance)
             views = self._populate_views(performance, llm_result)
@@ -187,10 +187,12 @@ class ConverterService(BaseService):
             "platform_specific": None,
         }
     
-    def _populate_landing_page(self, lp_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _populate_landing_page(self, lp_result: Dict[str, Any], llm_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Populate landing_page section (optional)"""
         if not lp_result:
             return None
+        
+        consistency = llm_result.get("message_consistency", {})
         
         return {
             "url": lp_result.get("url"),
@@ -201,11 +203,11 @@ class ConverterService(BaseService):
             "form_field_count": lp_result.get("form_fields_count"),
             "cta_button_text": lp_result.get("primary_cta"),
             "message_consistency": {
-                "match_score": None,
-                "consistency_basis": None,
-                "key_alignment_points": None,
-                "mismatch_areas": None,
-                "analyzed_at": None,
+                "match_score": consistency.get("match_score"),
+                "consistency_basis": consistency.get("consistency_basis"),
+                "key_alignment_points": consistency.get("key_alignment_points"),
+                "mismatch_areas": consistency.get("mismatch_areas"),
+                "analyzed_at": datetime.now().isoformat() + "Z" if consistency.get("match_score") is not None else None,
             },
             "lp_page_structure": {
                 "has_hero_section": lp_result.get("has_hero_section"),

@@ -7,7 +7,7 @@ Responsible for:
 - Error handling and logging
 - Merging results into final spec
 
-Flow: Ingestion → Metadata → (Video/OCR/LP parallel) → LLM → Converter → spec
+Flow: Ingestion ↁEMetadata ↁE(Video/OCR/LP parallel) ↁELLM ↁEConverter ↁEspec
 """
 
 from typing import Dict, Any, Optional
@@ -165,11 +165,11 @@ class AnalysisOrchestrator:
                 video_file_path = self.ingested_asset.get("file_path")
                 if video_file_path:
                     self.video_result = video_service.execute(video_file_path)
-                    self.logger.info("Video processing successful")
+                    logger.info("Video processing successful")
                     # Cleanup temp files
                     video_service.cleanup()
             except Exception as e:
-                self.logger.warning(f"Video processing failed (non-fatal): {str(e)}")
+                logger.warning(f"Video processing failed (non-fatal): {str(e)}")
                 self.video_result = {"success": False, "message": str(e)}
         else:
             self.video_result = {}
@@ -179,9 +179,9 @@ class AnalysisOrchestrator:
             ocr_service = OCRService(engine="mock")
             # Placeholder - would need actual image paths in future
             self.ocr_result = ocr_service.execute("dummy_path")
-            self.logger.info("OCR processing complete (mock)")
+            logger.info("OCR processing complete (mock)")
         except Exception as e:
-            self.logger.warning(f"OCR processing failed (non-fatal): {str(e)}")
+            logger.warning(f"OCR processing failed (non-fatal): {str(e)}")
             self.ocr_result = {"success": False, "message": str(e)}
         
         # Parse LP if provided
@@ -189,14 +189,14 @@ class AnalysisOrchestrator:
             try:
                 lp_service = LPService()
                 self.lp_result = lp_service.execute(self.lp_input)
-                self.logger.info("LP parsing successful")
+                logger.info("LP parsing successful")
             except Exception as e:
-                self.logger.warning(f"LP parsing failed (non-fatal): {str(e)}")
+                logger.warning(f"LP parsing failed (non-fatal): {str(e)}")
                 self.lp_result = {}
         else:
             self.lp_result = {}
         
-        self.logger.info("Content analysis complete (Video/OCR/LP)")
+        logger.info("Content analysis complete (Video/OCR/LP)")
 
     def _step_llm(self) -> None:
         """
@@ -213,9 +213,9 @@ class AnalysisOrchestrator:
                 primary_text=self.ingested_asset.get("data") if isinstance(self.ingested_asset.get("data"), str) else None,
                 lp_copy=self.lp_result.get("fv_copy") if self.lp_result else None,
             )
-            self.logger.info("LLM analysis complete")
+            logger.info("LLM analysis complete")
         except Exception as e:
-            self.logger.warning(f"LLM analysis failed (non-fatal): {str(e)}")
+            logger.warning(f"LLM analysis failed (non-fatal): {str(e)}")
             self.llm_result = {"creative_analysis": {}, "message_consistency": {}, "recommendations": []}
 
     def _step_load_kpi(self) -> None:
@@ -251,7 +251,7 @@ class AnalysisOrchestrator:
                 llm_result=self.llm_result or {},
                 kpi_result=self.kpi_data,
             )
-            self.logger.info("Conversion to ad_insight_spec complete")
+            logger.info("Conversion to ad_insight_spec complete")
         except Exception as e:
             raise ProcessingError(f"Converter failed: {str(e)}")
 
