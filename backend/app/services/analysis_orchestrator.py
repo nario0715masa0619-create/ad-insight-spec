@@ -150,12 +150,28 @@ class AnalysisOrchestrator:
         - Extract video frames (if video)
         - OCR text (if image)
         - Parse LP (if LP provided)
+        
+        Can be parallelized in future with ThreadPoolExecutor.
         """
+        from app.services.lp_service import LPService
+        
+        # Parse LP if provided
+        if self.lp_input:
+            try:
+                lp_service = LPService()
+                self.lp_result = lp_service.execute(self.lp_input)
+                self.logger.info("LP parsing successful")
+            except Exception as e:
+                self.logger.warning(f"LP parsing failed (non-fatal): {str(e)}")
+                self.lp_result = {}
+        else:
+            self.lp_result = {}
+        
+        # Placeholder: Mock results for Video and OCR (will be implemented later)
         self.video_result = {"frames": [], "duration_seconds": None}
         self.ocr_result = {"text": "", "confidence": 0.0}
-        self.lp_result = {"fv_copy": "", "form_fields": []}
         
-        logger.info("Content analysis (using mock data for now)")
+        self.logger.info("Content analysis complete (LP parsed, Video/OCR mocked)")
 
     def _step_llm(self) -> None:
         """
