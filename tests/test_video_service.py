@@ -36,8 +36,19 @@ class TestVideoService:
     
     @pytest.fixture
     def dummy_mp4_file(self, temp_dir):
-        """Create a minimal dummy MP4 file for testing"""
+        """Create a minimal dummy MP4 file for testing using FFmpeg"""
         mp4_path = Path(temp_dir) / "test.mp4"
+        
+        # Try to use FFmpeg to create a real 1-second video
+        try:
+            import subprocess
+            subprocess.run([
+                'ffmpeg', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x240:rate=30',
+                '-c:v', 'libx264', '-preset', 'ultrafast', str(mp4_path)
+            ], capture_output=True, check=True)
+            return str(mp4_path)
+        except Exception:
+            pass
         
         # Create minimal MP4 header (ftyp + mdat boxes)
         with open(mp4_path, 'wb') as f:
