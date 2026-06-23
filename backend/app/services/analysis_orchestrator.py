@@ -202,19 +202,21 @@ class AnalysisOrchestrator:
         """
         Step 4: LLM Labeling
         
-        Responsibilities:
-        - Analyze creative (hook, tone, emotion)
-        - Calculate message consistency (if LP provided)
-        - Generate recommendations
+        Currently: Mock implementation
+        Future: Gemini 2.0 Flash integration
         """
-        self.llm_result = {
-            "hook_type": "benefit",
-            "primary_tone": "inspirational",
-            "detected_emotions": [],
-            "message_consistency_score": None,
-            "message_consistency_basis": None,
-        }
-        logger.info("LLM labeling (using mock data for now)")
+        from app.services.llm_service import LLMService
+        
+        try:
+            llm_service = LLMService(model="mock")
+            self.llm_result = llm_service.execute(
+                primary_text=self.ingested_asset.get("data") if isinstance(self.ingested_asset.get("data"), str) else None,
+                lp_copy=self.lp_result.get("fv_copy") if self.lp_result else None,
+            )
+            self.logger.info("LLM analysis complete")
+        except Exception as e:
+            self.logger.warning(f"LLM analysis failed (non-fatal): {str(e)}")
+            self.llm_result = {"creative_analysis": {}, "message_consistency": {}, "recommendations": []}
 
     def _step_load_kpi(self) -> None:
         """
@@ -231,34 +233,27 @@ class AnalysisOrchestrator:
     def _step_converter(self) -> None:
         """
         Step 6: Convert to ad_insight_spec v0.2
+        
+        Aggregate all Service outputs and convert to final spec.
+        Validate against Pydantic model.
         """
-        from datetime import datetime as dt
+        from app.services.converter_service import ConverterService
         
-        self.final_spec = {
-            "input_metadata": {
-                "mode": self.mode,
-                "source_type": "local_file",
-                "input_timestamp": dt.now().isoformat() + "Z",
-            },
-            "asset_meta": self.metadata or {},
-            "creative_core": {},
-            "landing_page": self.lp_result if self.lp_input else None,
-            "performance": self.kpi_data if self.kpi_path else None,
-            "diagnostics": {
-                "qualitative": {},
-                "quantitative": None,
-            },
-            "views": None,
-            "_metadata": {
-                "generated_at": dt.now().isoformat() + "Z",
-                "data_source": "local_file",
-                "ai_model_version": "gemini-2.0-flash",
-                "json_schema_version": "v0.2",
-                "input_mode": self.mode,
-            }
-        }
-        
-        logger.info("Converter: Spec generated (placeholder)")
+        try:
+            converter_service = ConverterService()
+            self.final_spec = converter_service.execute(
+                mode=self.mode,
+                ingestion_result=self.ingested_asset or {},
+                metadata_result=self.metadata or {},
+                lp_result=self.lp_result or {},
+                video_result=self.video_result or {},
+                ocr_result=self.ocr_result or {},
+                llm_result=self.llm_result or {},
+                kpi_result=self.kpi_data,
+            )
+            self.logger.info("Conversion to ad_insight_spec complete")
+        except Exception as e:
+            raise ProcessingError(f"Converter failed: {str(e)}")
 
     def get_spec(self) -> Dict[str, Any]:
         """Return final spec (after run())"""
