@@ -13,6 +13,7 @@ Output: metadata dict for asset_meta population
 """
 
 import uuid
+import hashlib
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 import logging
@@ -76,7 +77,9 @@ class MetadataService(BaseService):
             self.logger.info(f"Extracting metadata for format: {asset_format}")
             
             # Generate asset_id
-            asset_id = self._generate_asset_id()
+            platform = metadata.get("platform", "unknown")
+            content_bytes = data.encode('utf-8') if isinstance(data, str) else data
+            asset_id = self._generate_asset_id(platform=platform, file_content=content_bytes)
             self.logger.info(f"Generated asset_id: {asset_id}")
             
             # Extract format-specific metadata
@@ -133,23 +136,18 @@ class MetadataService(BaseService):
         
         return True
     
-    def _generate_asset_id(self) -> str:
+    def _generate_asset_id(self, platform: str, file_content: bytes) -> str:
         """
-        Generate unique asset ID in format: asset_YYYYMMDD_HHmmss_local_<uuid>
+        Generate unique asset ID based on content hash.
+        Format: asset_<platform>_<sha256_hash_first_16_chars>
         
-        Example: asset_20260623_143000_local_a1b2c3d4
+        Example: asset_unknown_a1b2c3d4e5f6g7h8
         
         Returns:
             str: Unique asset ID
         """
-        now = datetime.now()
-        date_str = now.strftime("%Y%m%d")
-        time_str = now.strftime("%H%M%S")
-        
-        # Generate short UUID (first 8 characters)
-        short_uuid = str(uuid.uuid4()).replace("-", "")[:8]
-        
-        asset_id = f"asset_{date_str}_{time_str}_local_{short_uuid}"
+        content_hash = hashlib.sha256(file_content).hexdigest()[:16]
+        asset_id = f"asset_{platform}_{content_hash}"
         return asset_id
     
     def _extract_video_metadata(self, data: bytes, base_metadata: Dict[str, Any]) -> Dict[str, Any]:

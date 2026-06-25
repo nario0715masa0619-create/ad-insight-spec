@@ -166,8 +166,8 @@ class AssetMeta(BaseModel):
     """素材メタデータ（file-first）"""
     asset_id: str = Field(
         ...,
-        description="一意素材ID (asset_YYYYMMDD_HHmmss_platform_uuid)",
-        regex=r"^asset_\d{8}_\d{6}_[a-z_]+_[a-z0-9]+$"
+        description="一意素材ID (asset_platform_hash または asset_YYYYMMDD_HHmmss_platform_uuid)",
+        regex=r"^asset_[a-z0-9_]+$"
     )
     asset_name: Optional[str] = Field(None, description="ユーザー指定の素材名", max_length=255)
     platform: Optional[str] = Field(None, description="meta / google / tiktok / unknown")

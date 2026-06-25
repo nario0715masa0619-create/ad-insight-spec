@@ -176,10 +176,8 @@ def test_6_reanalyze(asset_id_1):
                     log_test(6, "削除後再分析 (version +1)", "❌ FAILED", "version=2 が見つからない")
                     return False, "FAILED", "version ロジック未実装または bug"
             else:
-                # 異なる asset_id → テスト未成立
-                log_test(6, "削除後再分析 (version +1)", "⚠️  SKIPPED", 
-                        f"asset_id 異なる: {asset_id_1} → {asset_id_2}")
-                return None, "SKIPPED", "asset_id が UUID ベース → テスト6 成立不可"
+                log_test(6, "削除後再分析 (version +1)", "❌ FAILED", f"asset_id が異なります: {asset_id_1} != {asset_id_2}")
+                return False, "FAILED", "asset_id が一致しません"
         else:
             log_test(6, "削除後再分析", "❌ FAILED", f"Status: {response.status_code}")
             return False, "FAILED", "再分析リクエスト失敗"

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_
+from sqlalchemy import desc, and_, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from app.models import AdInsight
@@ -25,18 +25,18 @@ class AdInsightRepository:
     def create(
         self,
         asset_id: str,
-        version: int,
         format: str,
-        spec_data: Dict[str, Any]
+        spec_data: Dict[str, Any],
+        version: Optional[int] = None
     ) -> AdInsight:
         """
         新しい AdInsight レコードを作成
         
         Args:
             asset_id: 素材 ID
-            version: バージョン番号
             format: フォーマット（video_static など）
             spec_data: ad_insight_spec v0.2 全体（dict）
+            version: 指定がない場合は自動インクリメントされる
         
         Returns:
             作成されたレコード
@@ -44,6 +44,11 @@ class AdInsightRepository:
         Raises:
             Exception: 同一 (asset_id, version) が既に存在する場合
         """
+        if version is None:
+            max_version = self.db.query(func.max(AdInsight.version)).filter(
+                AdInsight.asset_id == asset_id
+            ).scalar()
+            version = (max_version or 0) + 1
         # 同一バージョンが既に存在するかチェック
         existing = self.db.query(AdInsight).filter(
             and_(

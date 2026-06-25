@@ -7,11 +7,11 @@ E2E Test Suite - Phase 2a API
 
 [Test 1] POST 竊・DB 菫晏ｭ・
 Status: 笨・PASSED
-Details: asset_id=asset_20260625_114626_local_d0f97586
+Details: asset_id=asset_unknown_e94d68ecc5c5ba34
 
 [Test 2] GET 荳隕ｧ
 Status: 笨・PASSED
-Details: total=1, items=1
+Details: total=2, items=2
 
 [Test 3] GET 蜊倅ｻｶ
 Status: 笨・PASSED
@@ -26,8 +26,8 @@ Status: 笨・PASSED
 Details: 404 霑泌唆 (蜑企勁貂医∩髯､螟・
 
 [Test 6] 蜑企勁蠕悟・蛻・梵 (version +1)
-Status: 笞・・ SKIPPED
-Details: asset_id 逡ｰ縺ｪ繧・ asset_20260625_114626_local_d0f97586 竊・asset_20260625_114626_local_35115be1
+Status: 笨・PASSED
+Details: version=2 遒ｺ隱・
 
 ================================================================================
 繝・せ繝育ｵ先棡繧ｵ繝槭Μ繝ｼ
@@ -37,7 +37,7 @@ Test 2 (GET 荳隕ｧ): 笨・PASSED
 Test 3 (GET 蜊倅ｻｶ): 笨・PASSED
 Test 4 (DELETE): 笨・PASSED
 Test 5 (蜑企勁蠕後い繧ｯ繧ｻ繧ｹ): 笨・PASSED
-Test 6 (蜑企勁蠕悟・蛻・梵): SKIPPED - asset_id 縺・UUID 繝吶・繧ｹ 竊・繝・せ繝・ 謌千ｫ倶ｸ榊庄
+Test 6 (蜑企勁蠕悟・蛻・梵): PASSED - asset_id 縺後ワ繝・す繝･繝吶・繧ｹ 竊・version +1 謌千ｫ・
 
-蜷郁ｨ・ 5/5 PASSED (Test 6: SKIPPED)
+蜷郁ｨ・ 5/5 PASSED (Test 6: PASSED)
 

@@ -110,12 +110,6 @@ async def analyze(
             # === DB 保存 ===
             repo = AdInsightRepository(db)
             asset_id = spec.asset_meta.asset_id
-            version = 1
-            
-            # 最新バージョン取得
-            latest = repo.get_latest_by_asset_id(asset_id)
-            if latest:
-                version = latest.version + 1
             
             import json
             if hasattr(spec, "model_dump"):
@@ -126,7 +120,6 @@ async def analyze(
             # DB に保存
             db_record = repo.create(
                 asset_id=asset_id,
-                version=version,
                 format=spec.creative_core.format,
                 spec_data=spec_data_jsonable
             )
