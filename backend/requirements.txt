@@ -36,3 +36,6 @@ pytesseract>=0.3.10
 # Windows: https://github.com/UB-Mannheim/tesseract/wiki
 # macOS: brew install tesseract
 # Linux: sudo apt-get install tesseract-ocr
+
+pydantic-settings>=2.0.0
+python-json-logger>=2.0.4

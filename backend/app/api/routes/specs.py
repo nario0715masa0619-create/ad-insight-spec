@@ -13,6 +13,11 @@ from app.models import AdInsight
 from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
 
+from app.utils.error_handler import create_error_response, ErrorResponse
+from app.utils.logging import request_id_var, trace_id_var, get_logger
+
+logger = get_logger(__name__)
+
 # ===== ルーター定義 =====
 
 router = APIRouter(
@@ -67,6 +72,16 @@ async def analyze(
     - 500: 分析エラー
     """
     try:
+        logger.info(
+            "Analysis started",
+            extra={
+                "filename": input_file.filename,
+                "mode": mode,
+                "request_id": request_id_var.get(),
+                "trace_id": trace_id_var.get()
+            }
+        )
+        
         # === ファイル一時保存 ===
         temp_dir = tempfile.mkdtemp()
         input_path = None
@@ -124,14 +139,38 @@ async def analyze(
                 spec_data=spec_data_jsonable
             )
             
+            logger.info(
+                "Analysis completed successfully",
+                extra={
+                    "request_id": request_id_var.get(),
+                    "trace_id": trace_id_var.get()
+                }
+            )
+            
             return spec_data_jsonable
         
         finally:
             # 一時ファイル削除
             shutil.rmtree(temp_dir, ignore_errors=True)
+            
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        error_response, status_code = create_error_response(
+            error_message=str(e),
+            error_code="VALIDATION_ERROR",
+            status_code=400
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Analysis error: {str(e)}")
+        error_response, status_code = create_error_response(
+            error_message="Analysis failed",
+            error_code="ANALYSIS_ERROR",
+            status_code=500,
+            details={"exception": str(e)}
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
 
 
 @router.get("/", response_model=Dict[str, Any], tags=["List"])
@@ -158,6 +197,11 @@ async def list_specs(
     - `limit`: 取得件数
     """
     try:
+        logger.info(
+            "Fetching specs list",
+            extra={"skip": skip, "limit": limit, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
+        )
+        
         repo = AdInsightRepository(db)
         records, total_count = repo.list_active(
             skip=skip,
@@ -174,7 +218,13 @@ async def list_specs(
         }
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"List error: {str(e)}")
+        error_response, status_code = create_error_response(
+            error_message="Failed to fetch specs",
+            error_code="FETCH_ERROR",
+            status_code=500
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
 
 
 @router.get("/{asset_id}", response_model=Dict[str, Any], tags=["Get"])
@@ -197,6 +247,11 @@ async def get_spec(
     - 404: レコードなし
     """
     try:
+        logger.info(
+            f"Fetching spec: {asset_id}",
+            extra={"asset_id": asset_id, "version": version, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
+        )
+        
         repo = AdInsightRepository(db)
         
         # バージョン指定がある場合
@@ -218,7 +273,13 @@ async def get_spec(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Get spec error: {str(e)}")
+        error_response, status_code = create_error_response(
+            error_message="Failed to fetch spec",
+            error_code="FETCH_ERROR",
+            status_code=500
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
 
 
 @router.delete("/{asset_id}", response_model=Dict[str, str], tags=["Delete"])
@@ -239,6 +300,11 @@ async def delete_spec(
     - 404: レコードなし
     """
     try:
+        logger.info(
+            f"Deleting spec: {asset_id}",
+            extra={"asset_id": asset_id, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
+        )
+        
         repo = AdInsightRepository(db)
         deleted_count = repo.delete_logical_by_asset_id(asset_id)
         
@@ -250,4 +316,10 @@ async def delete_spec(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Delete spec error: {str(e)}")
+        error_response, status_code = create_error_response(
+            error_message="Failed to delete spec",
+            error_code="DELETE_ERROR",
+            status_code=500
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
