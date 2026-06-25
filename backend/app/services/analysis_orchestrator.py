@@ -174,15 +174,19 @@ class AnalysisOrchestrator:
         else:
             self.video_result = {}
         
-        # OCR (currently mock implementation - will be upgraded Phase 2)
+        # OCR processing
         try:
-            ocr_service = OCRService(engine="mock")
-            # Placeholder - would need actual image paths in future
-            self.ocr_result = ocr_service.execute("dummy_path")
-            logger.info("OCR processing complete (mock)")
+            from app.services.ocr_service import OCRService
+            media_type = "video" if self.ingested_asset and self.ingested_asset.get("format") == "video_static" else "image"
+            file_path = self.ingested_asset.get("file_path", "") if self.ingested_asset else ""
+            if file_path:
+                self.ocr_result = OCRService.extract_text(file_path, media_type=media_type)
+                logger.info(f"OCR processing complete ({media_type})")
+            else:
+                self.ocr_result = {"success": False, "ocr_extracted_text": "", "confidence": 0.0}
         except Exception as e:
             logger.warning(f"OCR processing failed (non-fatal): {str(e)}")
-            self.ocr_result = {"success": False, "message": str(e)}
+            self.ocr_result = {"success": False, "ocr_extracted_text": "", "confidence": 0.0}
         
         # Parse LP if provided
         if self.lp_input:
@@ -213,8 +217,15 @@ class AnalysisOrchestrator:
             
             if format_type == "video_static":
                 description = f"Video from {file_path}, extracted frames analyzed"
+                frames_data = self.ocr_result.get("frames", []) if self.ocr_result else []
+                ocr_text = self.ocr_result.get("ocr_extracted_text", "") if self.ocr_result else ""
+                if ocr_text:
+                    description += f"\n\n[OCR from {len(frames_data)} frames]\n{ocr_text}"
             else:
                 description = f"Image from {file_path}"
+                ocr_text = self.ocr_result.get("ocr_extracted_text", "") if self.ocr_result else ""
+                if ocr_text:
+                    description += f"\n\n[OCR Extracted Text]\n{ocr_text}"
                 
             lp_content = self.lp_result.get("fv_copy") if self.lp_result else None
             llm_model = os.getenv("LLM_MODEL", "gpt")
@@ -232,6 +243,7 @@ class AnalysisOrchestrator:
                     "visuals": cc_dict.get("visuals", {}),
                     "tone": cc_dict.get("tone", {}),
                     "ai_labels": cc_dict.get("ai_labels", []),
+                    "ocr_extracted_text": ocr_text,
                     "llm_model": llm_result.model,
                     "llm_success": llm_result.success,
                     "llm_retry_count": llm_result.retry_count,

@@ -1,230 +1,195 @@
-"""
-OCRService - Optical Character Recognition (Mock Implementation)
-
-Responsibilities (Phase 2):
-- Extract text from images using OCR
-- Support multiple OCR engines (Tesseract, Google Vision)
-- Return structured text blocks with confidence scores
-
-Current Status: MOCK IMPLEMENTATION
-This is a placeholder for the complete implementation.
-Will be upgraded in Phase 2 with actual Tesseract/Vision integration.
-
-TODO:
-1. Implement Tesseract integration (local OCR engine)
-2. Implement Google Vision API integration (cloud-based)
-3. Add confidence scoring
-4. Add text block location/bbox information
-5. Add language detection
-6. Add comparison/validation between engines
-"""
-
-from typing import Dict, Any, List, Optional
+import pytesseract
+from pytesseract import Output
+from PIL import Image
+import cv2
+import numpy as np
+from typing import Optional, List, Dict, Any
 import logging
-
-from app.services.base_service import BaseService, ValidationError, ProcessingError
-
+import os
 
 logger = logging.getLogger(__name__)
 
+if os.name == 'nt':
+    tesseract_path = os.environ.get("TESSERACT_PATH", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if os.path.exists(tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
-class OCRService(BaseService):
-    """
-    Service for Optical Character Recognition on images.
+class OCRService:
+    """Tesseract を使用した OCR サービス"""
     
-    Current: MOCK IMPLEMENTATION
-    Future: Will support Tesseract (local) and Google Vision (cloud)
-    """
+    # 動画フレーム抽出設定
+    VIDEO_FRAME_INDICES = [0.0, 0.5, 1.0]  # 先頭、中盤、末尾（相対位置）
     
-    def __init__(self, engine: str = "mock"):
+    @staticmethod
+    def extract_text_from_image(file_path: str) -> Dict[str, Any]:
         """
-        Initialize OCRService.
+        画像から文字を抽出
         
         Args:
-            engine (str): OCR engine to use ('tesseract', 'google_vision', 'mock')
-        """
-        super().__init__()
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.engine = engine
-        self.logger.info(f"OCRService initialized with engine: {engine}")
-    
-    def execute(self, image_path: str) -> Dict[str, Any]:
-        """
-        Extract text from image using OCR.
-        
-        Args:
-            image_path (str): Path to image file
+            file_path: 画像ファイルパス
         
         Returns:
-            dict: {
-                "detected_text": "Extracted text from image",
-                "text_blocks": [
-                    {"text": "...", "confidence": 0.95, "bbox": {...}},
-                    ...
-                ],
-                "ocr_engine": "mock" | "tesseract" | "google_vision",
-                "confidence": 0.92,
-                "language": "ja" | "en" | None,
-                "processing_time_ms": 1234,
-                "success": True,
-                "message": "Text extraction successful"
+            {
+                "success": bool,
+                "ocr_extracted_text": str,
+                "confidence": float,
+                "raw_data": dict or None
+            }
+        """
+        try:
+            image = Image.open(file_path)
+            
+            # Tesseract で OCR 実行
+            text = pytesseract.image_to_string(image, lang='eng+jpn')
+            
+            # 信頼度情報を取得
+            data = pytesseract.image_to_data(image, output_type=Output.DICT, lang='eng+jpn')
+            confidences = [int(conf) for conf in data['confidence'] if int(conf) > 0]
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            
+            # テキストをクリーニング
+            cleaned_text = text.strip()
+            
+            return {
+                "success": bool(cleaned_text),
+                "ocr_extracted_text": cleaned_text,
+                "confidence": round(avg_confidence / 100, 2),
+                "raw_data": {
+                    "num_words": len(cleaned_text.split()),
+                    "num_lines": len(cleaned_text.split('\n')),
+                    "avg_confidence": round(avg_confidence, 1)
+                } if cleaned_text else None
+            }
+            
+        except Exception as e:
+            logger.error(f"OCR error on image {file_path}: {str(e)}")
+            return {
+                "success": False,
+                "ocr_extracted_text": "",
+                "confidence": 0.0,
+                "raw_data": None
+            }
+    
+    @staticmethod
+    def extract_frames_from_video(file_path: str) -> List[Dict[str, Any]]:
+        """
+        動画から指定フレーム（先頭・中盤・末尾）を抽出
+        
+        Args:
+            file_path: 動画ファイルパス
+        
+        Returns:
+            [
+                {
+                    "frame_index": int,
+                    "relative_position": float,
+                    "ocr_extracted_text": str,
+                    "confidence": float
+                },
+                ...
+            ]
+        """
+        try:
+            cap = cv2.VideoCapture(file_path)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            if frame_count == 0:
+                logger.warning(f"No frames in video {file_path}")
+                return []
+            
+            frames_data = []
+            
+            for relative_pos in OCRService.VIDEO_FRAME_INDICES:
+                frame_idx = int(relative_pos * (frame_count - 1))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                
+                if not ret:
+                    logger.warning(f"Failed to read frame {frame_idx}")
+                    continue
+                
+                # フレームを RGB に変換
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_pil = Image.fromarray(frame_rgb)
+                
+                # OCR 実行
+                text = pytesseract.image_to_string(frame_pil, lang='eng+jpn')
+                data = pytesseract.image_to_data(frame_pil, output_type=Output.DICT, lang='eng+jpn')
+                confidences = [int(conf) for conf in data['confidence'] if int(conf) > 0]
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                
+                cleaned_text = text.strip()
+                
+                frames_data.append({
+                    "frame_index": frame_idx,
+                    "relative_position": relative_pos,
+                    "ocr_extracted_text": cleaned_text,
+                    "confidence": round(avg_confidence / 100, 2)
+                })
+            
+            cap.release()
+            return frames_data
+            
+        except Exception as e:
+            logger.error(f"Video OCR error on {file_path}: {str(e)}")
+            return []
+    
+    @staticmethod
+    def extract_text_from_video(file_path: str) -> Dict[str, Any]:
+        """
+        動画フレームの OCR 結果をマージ
+        
+        Args:
+            file_path: 動画ファイルパス
+        
+        Returns:
+            {
+                "success": bool,
+                "ocr_extracted_text": str (改行でマージ),
+                "frames": [...],
+                "confidence": float (平均)
+            }
+        """
+        frames_data = OCRService.extract_frames_from_video(file_path)
+        
+        if not frames_data:
+            return {
+                "success": False,
+                "ocr_extracted_text": "",
+                "frames": [],
+                "confidence": 0.0
             }
         
-        Raises:
-            ValidationError: Invalid input
-            ProcessingError: OCR processing failed
-        """
-        self.validate_input(image_path)
+        # フレーム結果を改行で結合（重複排除）
+        unique_texts = []
+        for frame in frames_data:
+            text = frame["ocr_extracted_text"].strip()
+            if text and text not in unique_texts:
+                unique_texts.append(text)
         
-        try:
-            self.logger.info(f"Processing image with {self.engine} OCR: {image_path}")
-            
-            if self.engine == "mock":
-                result = self._execute_mock(image_path)
-            elif self.engine == "tesseract":
-                result = self._execute_tesseract(image_path)
-            elif self.engine == "google_vision":
-                result = self._execute_google_vision(image_path)
-            else:
-                raise ValidationError(f"Unknown OCR engine: {self.engine}")
-            
-            self.logger.info(f"OCR processing complete: {result['message']}")
-            return result
-        
-        except (ValidationError, ProcessingError):
-            raise
-        except Exception as e:
-            raise ProcessingError(f"OCR processing failed: {str(e)}")
-    
-    def validate_input(self, image_path: str) -> bool:
-        """
-        Validate image input.
-        
-        Args:
-            image_path (str): Path to image file
-        
-        Returns:
-            bool: True if valid
-        
-        Raises:
-            ValidationError: If invalid
-        """
-        if not isinstance(image_path, str):
-            raise ValidationError(f"image_path must be string, got {type(image_path)}")
-        
-        # TODO: Add actual file validation when implementation is complete
-        # from pathlib import Path
-        # path = Path(image_path)
-        # if not path.exists():
-        #     raise ValidationError(f"Image file not found: {image_path}")
-        
-        return True
-    
-    def _execute_mock(self, image_path: str) -> Dict[str, Any]:
-        """
-        Mock OCR execution (placeholder).
-        
-        Args:
-            image_path (str): Path to image file
-        
-        Returns:
-            dict: Mock OCR result
-        """
-        self.logger.info("Executing MOCK OCR (placeholder)")
+        merged_text = "\n".join(unique_texts)
+        avg_confidence = sum(f["confidence"] for f in frames_data) / len(frames_data)
         
         return {
-            "detected_text": "",
-            "text_blocks": [],
-            "ocr_engine": "mock",
-            "confidence": None,
-            "language": None,
-            "processing_time_ms": 0,
-            "success": True,
-            "message": "Mock OCR - no text extracted (Phase 2 implementation pending)"
+            "success": bool(merged_text),
+            "ocr_extracted_text": merged_text,
+            "frames": frames_data,
+            "confidence": round(avg_confidence, 2)
         }
     
-    def _execute_tesseract(self, image_path: str) -> Dict[str, Any]:
+    @staticmethod
+    def extract_text(file_path: str, media_type: str = "image") -> Dict[str, Any]:
         """
-        OCR execution using Tesseract (local).
-        
-        TODO: Implement Tesseract integration
-        - Import pytesseract
-        - Load image with PIL
-        - Call pytesseract.image_to_string()
-        - Parse output with hOCR or TSOCR for confidence/bbox
-        - Handle language detection (jpn, eng, etc.)
+        統一インターフェース：画像または動画から文字を抽出
         
         Args:
-            image_path (str): Path to image file
+            file_path: メディアファイルパス
+            media_type: "image" または "video"
         
         Returns:
-            dict: Tesseract OCR result
+            構造化 OCR 結果（失敗時も ocr_extracted_text: "" で返却）
         """
-        raise ProcessingError("Tesseract OCR not yet implemented (Phase 2)")
-    
-    def _execute_google_vision(self, image_path: str) -> Dict[str, Any]:
-        """
-        OCR execution using Google Vision API (cloud).
-        
-        TODO: Implement Google Vision API integration
-        - Import google.cloud.vision
-        - Authenticate with credentials
-        - Load image from file
-        - Call vision_client.text_detection()
-        - Parse response (TextAnnotation with confidence)
-        - Extract language code from response
-        - Calculate processing time
-        
-        Args:
-            image_path (str): Path to image file
-        
-        Returns:
-            dict: Google Vision OCR result
-        """
-        raise ProcessingError("Google Vision API OCR not yet implemented (Phase 2)")
-
-
-# ===== Future TODO Notes =====
-"""
-Phase 2 Implementation Plan for OCRService:
-
-1. TESSERACT IMPLEMENTATION:
-   - Requires: pytesseract, PIL
-   - Install: pip install pytesseract Pillow
-   - Config: Set TESSDATA_PREFIX for language data
-   - Languages: Support jpn, eng, chi_sim, etc.
-   - Output: Use hOCR or TSOCR format for bbox/confidence
-
-2. GOOGLE VISION API IMPLEMENTATION:
-   - Requires: google-cloud-vision
-   - Install: pip install google-cloud-vision
-   - Setup: Export GOOGLE_APPLICATION_CREDENTIALS
-   - Features: text_detection() with confidence scores
-   - Cost: API usage charges apply
-   - Fallback: Use Tesseract if Vision API fails
-
-3. COMPARISON & SELECTION:
-   - Tesseract: Local, free, supports many languages, lower accuracy
-   - Vision API: Cloud, paid, very high accuracy, requires authentication
-   - Recommendation: Use Tesseract for Phase 1 (no auth), add Vision as option
-
-4. VALIDATION & TESTING:
-   - Create test images with known text
-   - Test language detection (JP vs EN)
-   - Test confidence scoring
-   - Benchmark accuracy vs both engines
-   - Test bbox accuracy for text localization
-
-5. ERROR HANDLING:
-   - Handle corrupted images
-   - Handle unsupported image formats
-   - Handle timeout/rate limits (Vision API)
-   - Implement fallback (Tesseract → Vision API)
-   - Log processing time and confidence
-
-6. INTEGRATION:
-   - Cache results (OCR can be expensive)
-   - Parallelize with video frame processing
-   - Pass text to LLMService for analysis
-   - Handle mixed JP/EN text
-"""
+        if media_type == "video":
+            return OCRService.extract_text_from_video(file_path)
+        else:
+            return OCRService.extract_text_from_image(file_path)

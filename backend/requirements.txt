@@ -30,3 +30,9 @@ google-generativeai>=0.3.0
 python-dotenv>=1.0.0
 
 openai>=1.3.0
+
+pytesseract>=0.3.10
+# Note: Tesseract-OCR 本体は別途インストール必要
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+# macOS: brew install tesseract
+# Linux: sudo apt-get install tesseract-ocr

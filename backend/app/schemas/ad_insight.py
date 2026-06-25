@@ -255,6 +255,11 @@ class CreativeCore(BaseModel):
     tone: Optional[Dict[str, Any]] = Field(None, description="トーン・感情分析")
     ai_labels: Optional[List[str]] = Field(None, description="LLMラベリング")
     platform_specific: Optional[Dict[str, Any]] = Field(None, description="プラットフォーム固有メタ")
+    ocr_extracted_text: str = Field(default="", description="OCR 抽出テキスト")
+    llm_model: Optional[str] = Field(None, description="使用 LLM モデル")
+    llm_success: Optional[bool] = Field(None, description="LLM 成功判定")
+    llm_retry_count: Optional[int] = Field(None, description="LLM リトライ回数")
+    llm_error: Optional[str] = Field(None, description="LLM エラー詳細")
 
     class Config:
         schema_extra = {
