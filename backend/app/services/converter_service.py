@@ -163,7 +163,7 @@ class ConverterService(BaseService):
         llm_result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Populate creative_core section"""
-        llm_analysis = llm_result.get("creative_analysis", {})
+        creative_core = llm_result.get("creative_core", {})
         
         return {
             "format": ingestion_result.get("format", "unknown"),
@@ -172,18 +172,9 @@ class ConverterService(BaseService):
             "headline": None,
             "body_text": None,
             "call_to_action": None,
-            "visual_elements": None,
-            "tone_and_emotion": {
-                "primary_tone": llm_analysis.get("primary_tone"),
-                "detected_emotion": llm_analysis.get("detected_emotions"),
-                "target_audience_inferred": llm_analysis.get("target_audience_inferred"),
-            },
-            "ai_labels": {
-                "hook_type": llm_analysis.get("hook_type"),
-                "appeal_type": None,
-                "identified_pain_points": llm_analysis.get("pain_points_identified"),
-                "identified_benefits": llm_analysis.get("benefits_identified"),
-            },
+            "visuals": creative_core.get("visuals", {}),
+            "tone": creative_core.get("tone", {}),
+            "ai_labels": creative_core.get("ai_labels", []),
             "platform_specific": None,
         }
     
@@ -244,6 +235,7 @@ class ConverterService(BaseService):
         """Populate diagnostics section"""
         llm_analysis = llm_result.get("creative_analysis", {})
         consistency = llm_result.get("message_consistency", {})
+        creative_core = llm_result.get("creative_core", {})
         
         qualitative = {
             "creative_fatigue_risk": "low",  # Mock: always low
@@ -282,6 +274,10 @@ class ConverterService(BaseService):
         return {
             "qualitative": qualitative,
             "quantitative": quantitative,
+            "llm_model": creative_core.get("llm_model"),
+            "llm_success": creative_core.get("llm_success"),
+            "llm_retry_count": creative_core.get("llm_retry_count"),
+            "llm_error": creative_core.get("llm_error")
         }
     
     def _populate_views(

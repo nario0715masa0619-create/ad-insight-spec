@@ -25,12 +25,42 @@ with tab1:
             try:
                 files = {"input_file": uploaded_file}
                 data = {"mode": mode}
-                response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=30)
+                response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=60)
                 
                 if response.status_code == 200:
                     result = response.json()
                     st.success("✅ 分析完了！")
+                    
+                    # LLM メタデータ表示
+                    diagnostics = result.get("diagnostics", {})
+                    if diagnostics:
+                        st.markdown("### 📊 LLM 分析メタデータ")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Model", diagnostics.get("llm_model", "N/A"))
+                        with col2:
+                            st.metric("Success", "✅" if diagnostics.get("llm_success") else "❌")
+                        with col3:
+                            st.metric("Retries", diagnostics.get("llm_retry_count", 0))
+                        
+                        if diagnostics.get("llm_error"):
+                            st.error(f"⚠️ エラー: {diagnostics['llm_error']}")
+                    
+                    # CreativeCore 結果表示
+                    creative_core = result.get("creative_core", {})
+                    if creative_core:
+                        st.markdown("### 🎨 CreativeCore 分析結果")
+                        with st.expander("Visuals"):
+                            st.json(creative_core.get("visuals", {}))
+                        with st.expander("Tone"):
+                            st.json(creative_core.get("tone", {}))
+                        with st.expander("AI Labels"):
+                            st.write(creative_core.get("ai_labels", []))
+                    
+                    # 全体 JSON 表示
+                    st.markdown("### 📄 完全な分析結果（JSON）")
                     st.json(result)
+                    
                     st.download_button(
                         label="📥 結果をダウンロード",
                         data=json.dumps(result, indent=2, ensure_ascii=False),

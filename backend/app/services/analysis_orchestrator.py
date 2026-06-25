@@ -202,21 +202,46 @@ class AnalysisOrchestrator:
         """
         Step 4: LLM Labeling
         
-        Currently: Mock implementation
-        Future: Gemini 2.0 Flash integration
+        Uses Gemini 2.0 Flash / GPT-4o integration via LLMService
         """
         from app.services.llm_service import LLMService
+        import os
         
         try:
-            llm_service = LLMService(model="mock")
-            self.llm_result = llm_service.execute(
-                primary_text=self.ingested_asset.get("data") if isinstance(self.ingested_asset.get("data"), str) else None,
-                lp_copy=self.lp_result.get("fv_copy") if self.lp_result else None,
+            file_path = self.ingested_asset.get("file_path", "unknown") if self.ingested_asset else "unknown"
+            format_type = self.ingested_asset.get("format", "") if self.ingested_asset else ""
+            
+            if format_type == "video_static":
+                description = f"Video from {file_path}, extracted frames analyzed"
+            else:
+                description = f"Image from {file_path}"
+                
+            lp_content = self.lp_result.get("fv_copy") if self.lp_result else None
+            llm_model = os.getenv("LLM_MODEL", "gpt")
+            
+            llm_result = LLMService.analyze_creative(
+                image_description=description,
+                lp_content=lp_content,
+                model=llm_model
             )
+            
+            cc_dict = llm_result.creative_core.model_dump() if llm_result.creative_core else {}
+            
+            self.llm_result = {
+                "creative_core": {
+                    "visuals": cc_dict.get("visuals", {}),
+                    "tone": cc_dict.get("tone", {}),
+                    "ai_labels": cc_dict.get("ai_labels", []),
+                    "llm_model": llm_result.model,
+                    "llm_success": llm_result.success,
+                    "llm_retry_count": llm_result.retry_count,
+                    "llm_error": llm_result.error_details
+                }
+            }
             logger.info("LLM analysis complete")
         except Exception as e:
             logger.warning(f"LLM analysis failed (non-fatal): {str(e)}")
-            self.llm_result = {"creative_analysis": {}, "message_consistency": {}, "recommendations": []}
+            self.llm_result = {"creative_core": {}}
 
     def _step_load_kpi(self) -> None:
         """

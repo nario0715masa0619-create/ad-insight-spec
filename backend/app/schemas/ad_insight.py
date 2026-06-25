@@ -251,9 +251,9 @@ class CreativeCore(BaseModel):
     headline: Optional[str] = Field(None, description="見出し")
     body_text: Optional[str] = Field(None, description="本文")
     call_to_action: Optional[str] = Field(None, description="CTA")
-    visual_elements: Optional[VisualElements] = Field(None, description="ビジュアル分析")
-    tone_and_emotion: Optional[ToneAndEmotion] = Field(None, description="トーン・感情分析")
-    ai_labels: Optional[AiLabels] = Field(None, description="LLMラベリング")
+    visuals: Optional[Dict[str, Any]] = Field(None, description="ビジュアル分析")
+    tone: Optional[Dict[str, Any]] = Field(None, description="トーン・感情分析")
+    ai_labels: Optional[List[str]] = Field(None, description="LLMラベリング")
     platform_specific: Optional[Dict[str, Any]] = Field(None, description="プラットフォーム固有メタ")
 
     class Config:
@@ -453,6 +453,10 @@ class Diagnostics(BaseModel):
     """診断結果（定性+定量）"""
     qualitative: QualitativeDiagnostics = Field(..., description="定性診断")
     quantitative: Optional[QuantitativeDiagnostics] = Field(None, description="定量診断（KPI入力時のみ）")
+    llm_model: Optional[str] = Field(None, description="LLM Model")
+    llm_success: Optional[bool] = Field(None, description="LLM Success")
+    llm_retry_count: Optional[int] = Field(None, description="LLM Retry Count")
+    llm_error: Optional[str] = Field(None, description="LLM Error")
 
 
 # ===== Views =====
