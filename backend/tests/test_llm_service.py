@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from app.services.llm_service import LLMService
-from app.schemas.llm_response import LLMResponseSchema
+from app.schemas.llm_response import LLMResponseSchema, ImprovementCommentsSchema
 
 class TestLLMServiceSchema:
     """LLMService のスキーマ検証テスト"""
@@ -153,6 +153,43 @@ class TestLLMServiceGPT:
         assert result.success is False
         assert result.retry_count == 2
         assert "Failed after 3 retries" in result.error_details
+
+    @patch('app.services.llm_service.openai.OpenAI')
+    def test_analyze_creative_improvements_success(self, mock_openai):
+        """改善コメント生成成功テスト"""
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """{
+            "comments": [
+                {
+                    "issue_summary": "見出しのフォントサイズが小さい",
+                    "target_scope": "ページ上部の見出し",
+                    "evidence": "36px で表示されており、モバイルでの視認性が低い",
+                    "recommended_action": "フォントサイズを 48px 以上に拡大",
+                    "priority": "P1",
+                    "expected_impact": "モバイル CTR 3～5% 向上",
+                    "confidence": 0.88
+                }
+            ],
+            "total_count": 1,
+            "summary": "ビジュアル階層の再構築が必須"
+        }"""
+        
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+        
+        creative_data = {
+            "visuals": {"dominant_colors": ["blue"], "clarity": "高"},
+            "tone": {"primary_tone": ["professional"]},
+            "ai_labels": ["tech", "modern"]
+        }
+        
+        result = LLMService.analyze_creative_improvements(creative_data, model="gpt")
+        
+        assert isinstance(result, ImprovementCommentsSchema)
+        assert len(result.comments) == 1
+        assert result.comments[0].issue_summary == "見出しのフォントサイズが小さい"
 
 
 class TestLLMServiceGemini:

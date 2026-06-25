@@ -23,6 +23,7 @@ from typing import Optional, List, Dict, Any
 from pydantic.v1 import BaseModel, Field, validator, root_validator
 from datetime import datetime
 from enum import Enum
+from app.schemas.llm_response import ImprovementCommentsSchema, LLMImprovementValidationError
 
 
 # ===== Enumerations =====
@@ -458,6 +459,17 @@ class Diagnostics(BaseModel):
     """診断結果（定性+定量）"""
     qualitative: QualitativeDiagnostics = Field(..., description="定性診断")
     quantitative: Optional[QuantitativeDiagnostics] = Field(None, description="定量診断（KPI入力時のみ）")
+    
+    # ===== 新規: 構造化改善コメント（optional） =====
+    improvements: Optional[ImprovementCommentsSchema] = Field(
+        default=None, 
+        description="構造化改善コメント（P0品質向上で追加）"
+    )
+    improvements_error: Optional[LLMImprovementValidationError] = Field(
+        default=None,
+        description="改善コメント生成失敗時のエラー情報"
+    )
+    
     llm_model: Optional[str] = Field(None, description="LLM Model")
     llm_success: Optional[bool] = Field(None, description="LLM Success")
     llm_retry_count: Optional[int] = Field(None, description="LLM Retry Count")

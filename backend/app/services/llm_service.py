@@ -6,8 +6,13 @@ from dotenv import load_dotenv
 import openai
 import google.generativeai as genai
 from pydantic import ValidationError
+from typing import Union
+import logging
 
-from app.schemas.llm_response import LLMResponseSchema, CreativeCoreSchema
+from app.schemas.llm_response import LLMResponseSchema, CreativeCoreSchema, ImprovementCommentsSchema, LLMImprovementValidationError
+from app.services.llm_validator_service import LLMValidatorService
+
+logger = logging.getLogger(__name__)
 
 # .env から API キーを読み込む
 env_path = r"C:\Users\nario\.ad-insight-spec\.env"
@@ -246,3 +251,142 @@ class LLMService:
             return LLMService.analyze_creative_gemini(image_description, lp_content)
         else:
             raise ValueError(f"Unknown model: {model}")
+
+    IMPROVEMENT_ANALYSIS_PROMPT = """
+あなたは広告クリエイティブ分析の専門家です。
+以下の情報に基づいて、構造化された改善コメントを JSON 形式で返してください。
+
+【分析対象情報】
+{analysis_data}
+
+【必須ルール - 以下を必ず守ってください】
+1. 抽象語だけで終わらない（「改善余地」「訴求力」「魅力」等の曖昧語は使用禁止）
+2. 対象箇所を必ず明記する（例：「CTA ボタンテキスト」「見出しの色」）
+3. 根拠を必ず付ける（なぜそう判断したか、データや観察に基づく）
+4. 推奨アクションを必ず具体化する（「改善する」ではなく「『今すぐ申し込む』に変更」）
+5. 同一対象に対する相反評価を出さない（明確/不明確、強い/弱いの両方を言わない）
+6. 1 コメント 1 論点にする（複数の問題を 1 つの改善コメントに混ぜない）
+7. 日本語は短く明快にする（各文は 30 文字以内を目安）
+
+【JSON 出力フォーマット（必須）】
+{{
+    "comments": [
+        {{
+            "issue_summary": "問題を 1 行で説明（20～30 文字）",
+            "target_scope": "対象箇所の具体的な部位",
+            "evidence": "改善根拠（データ、観察、理由）",
+            "recommended_action": "実行可能な具体的アクション",
+            "priority": "P0",
+            "expected_impact": "改善により期待される効果",
+            "confidence": 0.8
+        }}
+    ],
+    "total_count": 1,
+    "summary": "全体的な改善方針の簡潔なサマリー"
+}}
+
+【出力注意】
+- JSON 以外の説明文は一切含めない
+- コメントが 0 件の場合も JSON 構造は保持する（"comments": []）
+- 各フィールドの文字数を厳守する
+"""
+
+    @staticmethod
+    def analyze_creative_improvements(
+        creative_analysis: dict,
+        model: str = "gpt"
+    ) -> Union[ImprovementCommentsSchema, LLMImprovementValidationError]:
+        """
+        LLM で改善コメントを生成（再試行・バリデーション対応）
+        """
+        if not OPENAI_API_KEY and model == "gpt":
+            return LLMImprovementValidationError(
+                success=False,
+                error_code="API_KEY_MISSING",
+                reason="OPENAI_API_KEY is not configured"
+            )
+        
+        # プロンプト作成
+        analysis_json = json.dumps(creative_analysis, ensure_ascii=False, indent=2)
+        prompt = LLMService.IMPROVEMENT_ANALYSIS_PROMPT.format(analysis_data=analysis_json)
+        
+        # 再試行ループ（最大 3 回）
+        for attempt in range(LLMService.MAX_RETRIES):
+            try:
+                # LLM 呼び出し
+                if model == "gpt":
+                    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                    response = client.chat.completions.create(
+                        model=LLMService.GPT_MODEL,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert ad creative analyzer. Return only valid JSON."
+                            },
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=2000
+                    )
+                    response_text = response.choices[0].message.content
+                else:  # gemini
+                    model_obj = genai.GenerativeModel(LLMService.GEMINI_MODEL)
+                    response = model_obj.generate_content(prompt)
+                    response_text = response.text
+                
+                # JSON 抽出
+                json_text = response_text.strip()
+                if "```json" in json_text:
+                    json_start = json_text.find("```json") + 7
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+                elif "```" in json_text:
+                    json_start = json_text.find("```") + 3
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+                
+                data = json.loads(json_text)
+                
+                # バリデーション
+                validator = LLMValidatorService()
+                improvements = validator.validate_improvement_comments(data)
+                
+                if isinstance(improvements, ImprovementCommentsSchema):
+                    logger.info(f"Improvement comments generated successfully (attempt {attempt + 1})")
+                    return improvements
+                else:
+                    # バリデーション失敗 → 再試行
+                    logger.warning(f"Validation failed (attempt {attempt + 1}): {improvements.reason}")
+                    if attempt < LLMService.MAX_RETRIES - 1:
+                        continue
+                    else:
+                        return improvements  # 最後の試行で失敗 → エラー返却
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error (attempt {attempt + 1}): {str(e)}")
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return LLMImprovementValidationError(
+                        success=False,
+                        error_code="JSON_PARSE_ERROR",
+                        reason=f"Failed to parse LLM response as JSON: {str(e)}"
+                    )
+            
+            except Exception as e:
+                logger.error(f"LLM error (attempt {attempt + 1}): {str(e)}")
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return LLMImprovementValidationError(
+                        success=False,
+                        error_code="LLM_ERROR",
+                        reason=f"LLM generation failed: {str(e)}"
+                    )
+        
+        # すべての試行失敗
+        return LLMImprovementValidationError(
+            success=False,
+            error_code="MAX_RETRIES_EXCEEDED",
+            reason=f"Failed to generate valid improvement comments after {LLMService.MAX_RETRIES} attempts"
+        )
