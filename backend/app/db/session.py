@@ -1,29 +1,30 @@
-"""
-Database session management.
-"""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from typing import Generator
 
-from app.core.config import settings
+# SQLite ローカル DB URL
+SQLALCHEMY_DATABASE_URL = "sqlite:///./ad_insight.db"
 
-# Create engine
+# エンジン生成
 engine = create_engine(
-    settings.database_url,
-    echo=settings.debug,
-    pool_pre_ping=True,  # Verify connections before using
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},  # SQLite 用
+    echo=False  # 本番は False
 )
 
-# Create session factory
+# セッションファクトリー
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-def get_db() -> Session:
+# FastAPI 依存注入用
+def get_db() -> Generator[Session, None, None]:
     """
-    Dependency for FastAPI to get DB session.
-    Usage:
+    FastAPI のエンドポイント内で使用する DB セッション取得関数
+    
+    使用例:
         @app.get("/items")
         def read_items(db: Session = Depends(get_db)):
-            ...
+            items = db.query(Item).all()
+            return items
     """
     db = SessionLocal()
     try:

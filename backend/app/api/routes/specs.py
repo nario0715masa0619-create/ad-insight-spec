@@ -1,0 +1,253 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from sqlalchemy.orm import Session
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+import tempfile
+import shutil
+from pathlib import Path
+
+from app.db.session import get_db
+from app.repositories import AdInsightRepository
+from app.models import AdInsight
+from app.schemas.ad_insight import AdInsightSpec
+from app.services.analysis_orchestrator import AnalysisOrchestrator
+
+# ===== ルーター定義 =====
+
+router = APIRouter(
+    prefix="/api/v1/specs",
+    tags=["Specs"],
+    responses={404: {"description": "Not found"}}
+)
+
+
+# ===== Pydantic レスポンスモデル =====
+
+class AdInsightResponse(dict):
+    """
+    AdInsight レスポンス型
+    
+    JSON spec_data をそのまま返す
+    """
+    pass
+
+
+class ListResponse(dict):
+    """
+    一覧レスポンス型
+    """
+    pass
+
+
+# ===== エンドポイント =====
+
+@router.post("/analyze", response_model=Dict[str, Any], tags=["Analysis"])
+async def analyze(
+    input_file: UploadFile = File(...),
+    lp_file: Optional[UploadFile] = None,
+    kpi_file: Optional[UploadFile] = None,
+    mode: str = Query("file_plus_lp_plus_manual_kpi"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    ファイルをアップロードして分析を実行
+    
+    **入力**:
+    - `input_file`: 素材ファイル（image/video/text）[必須]
+    - `lp_file`: LP ファイル（HTML） [オプション]
+    - `kpi_file`: KPI ファイル（JSON） [オプション]
+    - `mode`: 入力モード [デフォルト: file_plus_lp_plus_manual_kpi]
+    
+    **出力**:
+    - `ad_insight_spec v0.2` JSON オブジェクト
+    
+    **エラー**:
+    - 400: 入力ファイル形式エラー
+    - 500: 分析エラー
+    """
+    try:
+        # === ファイル一時保存 ===
+        temp_dir = tempfile.mkdtemp()
+        input_path = None
+        lp_path = None
+        kpi_path = None
+        
+        try:
+            # input_file 保存
+            input_path = Path(temp_dir) / input_file.filename
+            with open(input_path, "wb") as f:
+                content = await input_file.read()
+                f.write(content)
+            
+            # lp_file 保存（オプション）
+            if lp_file:
+                lp_path = Path(temp_dir) / lp_file.filename
+                with open(lp_path, "wb") as f:
+                    content = await lp_file.read()
+                    f.write(content)
+            
+            # kpi_file 保存（オプション）
+            if kpi_file:
+                kpi_path = Path(temp_dir) / kpi_file.filename
+                with open(kpi_path, "wb") as f:
+                    content = await kpi_file.read()
+                    f.write(content)
+            
+            # === Orchestrator で分析実行 ===
+            orchestrator = AnalysisOrchestrator(
+                input_path=str(input_path),
+                lp_input=str(lp_path) if lp_path else None,
+                kpi_path=str(kpi_path) if kpi_path else None,
+                mode=mode
+            )
+            
+            spec_dict = orchestrator.run()
+            
+            # Pydantic 検証
+            spec = AdInsightSpec(**spec_dict)
+            
+            # === DB 保存 ===
+            repo = AdInsightRepository(db)
+            asset_id = spec.asset_meta.asset_id
+            version = 1
+            
+            # 最新バージョン取得
+            latest = repo.get_latest_by_asset_id(asset_id)
+            if latest:
+                version = latest.version + 1
+            
+            # DB に保存
+            db_record = repo.create(
+                asset_id=asset_id,
+                version=version,
+                format=spec.creative_core.format,
+                spec_data=spec.dict()
+            )
+            
+            return spec.dict()
+        
+        finally:
+            # 一時ファイル削除
+            shutil.rmtree(temp_dir, ignore_errors=True)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/", response_model=Dict[str, Any], tags=["List"])
+async def list_specs(
+    skip: int = Query(0, ge=0, description="スキップ件数"),
+    limit: int = Query(10, ge=1, le=100, description="取得件数上限"),
+    asset_id: Optional[str] = Query(None, description="asset_id フィルタ"),
+    format: Optional[str] = Query(None, description="format フィルタ"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    分析結果一覧取得（フィルタリング・ページング対応）
+    
+    **クエリパラメータ**:
+    - `skip`: スキップ件数（ページング）
+    - `limit`: 取得件数上限（1～100）
+    - `asset_id`: asset_id でフィルタ
+    - `format`: format でフィルタ
+    
+    **出力**:
+    - `items`: レコード一覧
+    - `total`: 全体件数
+    - `skip`: スキップ件数
+    - `limit`: 取得件数
+    """
+    try:
+        repo = AdInsightRepository(db)
+        records, total_count = repo.list_active(
+            skip=skip,
+            limit=limit,
+            format_filter=format,
+            asset_id_filter=asset_id
+        )
+        
+        return {
+            "items": [rec.spec_data for rec in records],
+            "total": total_count,
+            "skip": skip,
+            "limit": limit
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{asset_id}", response_model=Dict[str, Any], tags=["Get"])
+async def get_spec(
+    asset_id: str,
+    version: Optional[int] = Query(None, description="バージョン指定（未指定で最新）"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    分析結果取得（asset_id 指定）
+    
+    **パラメータ**:
+    - `asset_id`: 素材 ID
+    - `version`: バージョン指定（オプション、未指定で最新版）
+    
+    **出力**:
+    - `ad_insight_spec v0.2` JSON オブジェクト
+    
+    **エラー**:
+    - 404: レコードなし
+    """
+    try:
+        repo = AdInsightRepository(db)
+        
+        # バージョン指定がある場合
+        if version is not None:
+            record = db.query(AdInsight).filter(
+                AdInsight.asset_id == asset_id,
+                AdInsight.version == version,
+                AdInsight.is_deleted == False
+            ).first()
+        else:
+            # バージョン指定がない場合は最新版
+            record = repo.get_latest_by_asset_id(asset_id)
+        
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+        
+        return record.spec_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{asset_id}", response_model=Dict[str, str], tags=["Delete"])
+async def delete_spec(
+    asset_id: str,
+    db: Session = Depends(get_db)
+) -> Dict[str, str]:
+    """
+    分析結果削除（論理削除）
+    
+    **パラメータ**:
+    - `asset_id`: 素材 ID
+    
+    **出力**:
+    - `{"message": "Deleted successfully"}`
+    
+    **エラー**:
+    - 404: レコードなし
+    """
+    try:
+        repo = AdInsightRepository(db)
+        deleted_count = repo.delete_logical_by_asset_id(asset_id)
+        
+        if deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Record not found")
+        
+        return {"message": f"Deleted {deleted_count} record(s) successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
