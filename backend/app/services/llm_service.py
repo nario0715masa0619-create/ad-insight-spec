@@ -1,235 +1,128 @@
-"""
-LLMService - LLM-based Creative Analysis (Mock Implementation)
+import os
+import json
+from typing import Optional
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-Responsibilities (Phase 2):
-- Analyze creative (hook, tone, emotion)
-- Calculate message consistency (ad text vs LP)
-- Generate recommendations
+# .env から GEMINI_API_KEY を読み込む
+env_path = r"C:\Users\nario\.ad-insight-spec\.env"
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
-Current Status: MOCK IMPLEMENTATION
-Will be upgraded in Phase 2 with Gemini 2.0 Flash integration.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-TODO (Phase 2):
-1. Integrate Google Generative AI SDK (gemini-2.0-flash)
-2. Design prompt templates for:
-   - Creative analysis (hook, tone, emotion, audience)
-   - Message consistency scoring
-   - Recommendation generation
-3. Handle API authentication (GOOGLE_API_KEY)
-4. Implement error handling (rate limits, timeouts)
-5. Add confidence scoring
-6. Test deterministically (seeded responses or mocks)
-7. Integrate with vision API for image-text pairs
-"""
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-from typing import Dict, Any, Optional, List
-import logging
-from datetime import datetime
-
-from app.services.base_service import BaseService, ValidationError, ProcessingError
-
-
-logger = logging.getLogger(__name__)
-
-
-class LLMService(BaseService):
-    """
-    Service for LLM-based creative analysis and recommendations.
+class LLMService:
+    """Gemini 2.0 Flash を使用した LLM 分析サービス"""
     
-    Current: MOCK IMPLEMENTATION
-    Future: Will integrate Gemini 2.0 Flash API
-    """
+    MODEL_NAME = "gemini-2.0-flash"
     
-    def __init__(self, model: str = "mock"):
+    @staticmethod
+    def analyze_creative(
+        file_path: Optional[str] = None,
+        image_description: Optional[str] = None,
+        lp_content: Optional[str] = None
+    ) -> dict:
         """
-        Initialize LLMService.
+        CreativeCore 分析を Gemini 2.0 Flash で実行
         
         Args:
-            model (str): LLM model to use ('mock', 'gemini-2.0-flash', etc.)
-        """
-        super().__init__()
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.model = model
-        self.logger.info(f"LLMService initialized with model: {model}")
-    
-    def execute(
-        self,
-        image_paths: Optional[List[str]] = None,
-        primary_text: Optional[str] = None,
-        headline: Optional[str] = None,
-        lp_copy: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Analyze creative and generate insights.
-        
-        Args:
-            image_paths (list): Paths to creative images/frames
-            primary_text (str): Primary ad text
-            headline (str): Ad headline
-            lp_copy (str): Landing page copy (for consistency analysis)
+            file_path: メディアファイルパス（未使用、互換性維持）
+            image_description: 画像の説明文
+            lp_content: LP のテキストコンテンツ
         
         Returns:
-            dict: {
-                "creative_analysis": {
-                    "hook_type": "benefit",
-                    "primary_tone": "inspirational",
-                    "detected_emotions": ["excitement", "trust"],
-                    "target_audience_inferred": "entrepreneurs",
-                    "pain_points_identified": ["time_consuming"],
-                    "benefits_identified": ["efficiency"],
-                },
-                "message_consistency": {
-                    "match_score": 0.85,
-                    "consistency_basis": "Primary message alignment",
-                    "key_alignment_points": ["time saving"],
-                    "mismatch_areas": [],
-                },
-                "recommendations": [
-                    "Add social proof",
-                    "Emphasize limited-time offer",
-                ],
-                "llm_model": "mock",
-                "processing_time_ms": 0,
-                "success": True,
-                "message": "Mock LLM analysis complete"
+            {
+                "visuals": {...},
+                "tone": {...},
+                "ai_labels": [...]
             }
-        
-        Raises:
-            ProcessingError: If analysis fails
         """
+        if not GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is not set in environment variables")
+        
+        # プロンプト構築
+        prompt = f"""
+あなたは広告クリエイティブ分析の専門家です。以下の情報を分析して、JSON形式で結果を返してください。
+
+【画像情報】
+{image_description if image_description else 'なし'}
+
+【ランディングページコンテンツ】
+{lp_content if lp_content else 'なし'}
+
+【分析項目】
+
+1. **visuals** (画像・映像の視覚的特性):
+   - dominant_colors: [主要色]
+   - composition: 構図の説明
+   - style: デザインスタイル（モダン、クラシック等）
+   - clarity: 視認性（高/中/低）
+
+2. **tone** (トーン・メッセージング):
+   - primary_tone: 主要なトーン（楽観的、真摯、ユーモア、緊急性等）
+   - emotional_appeal: 感情的訴求（論理的/感情的）
+   - call_to_action: CTA の強度（強/中/弱）
+
+3. **ai_labels** (AI が認識したキーワードラベル):
+   - Array of strings (最大10個)
+
+【レスポンス形式】必ず以下のJSON形式で返してください。他の説明文は不要です。
+{{
+    "visuals": {{
+        "dominant_colors": ["色1", "色2"],
+        "composition": "説明",
+        "style": "スタイル",
+        "clarity": "高"
+    }},
+    "tone": {{
+        "primary_tone": ["トーン1", "トーン2"],
+        "emotional_appeal": "感情的",
+        "call_to_action": "強"
+    }},
+    "ai_labels": ["ラベル1", "ラベル2", "ラベル3"]
+}}
+"""
+        
         try:
-            self.logger.info(f"Analyzing creative with {self.model} model")
+            model = genai.GenerativeModel(LLMService.MODEL_NAME)
+            response = model.generate_content(prompt)
             
-            if self.model == "mock":
-                result = self._execute_mock(primary_text, lp_copy)
-            elif self.model == "gemini-2.0-flash":
-                result = self._execute_gemini(image_paths, primary_text, headline, lp_copy)
-            else:
-                raise ValidationError(f"Unknown LLM model: {self.model}")
+            # レスポンステキストから JSON を抽出
+            response_text = response.text.strip()
             
-            self.logger.info(f"LLM analysis complete: {result['message']}")
+            # JSON ブロック（```json ... ```）を処理
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                response_text = response_text[json_start:json_end].strip()
+            elif "```" in response_text:
+                json_start = response_text.find("```") + 3
+                json_end = response_text.find("```", json_start)
+                response_text = response_text[json_start:json_end].strip()
+            
+            result = json.loads(response_text)
+            
+            # スキーマバリデーション
+            if not isinstance(result.get("visuals"), dict):
+                result["visuals"] = {}
+            if not isinstance(result.get("tone"), dict):
+                result["tone"] = {}
+            if not isinstance(result.get("ai_labels"), list):
+                result["ai_labels"] = []
+            
             return result
-        
-        except (ValidationError, ProcessingError):
-            raise
+            
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse Gemini response as JSON: {str(e)}")
         except Exception as e:
-            raise ProcessingError(f"LLM analysis failed: {str(e)}")
+            raise RuntimeError(f"Gemini API error: {str(e)}")
     
-    def validate_input(self, *args, **kwargs) -> bool:
-        """Input validation (permissive for mock)"""
-        return True
-    
-    def _execute_mock(
-        self,
-        primary_text: Optional[str],
-        lp_copy: Optional[str]
-    ) -> Dict[str, Any]:
-        """
-        Mock LLM analysis.
-        
-        Returns deterministic mock responses for testing.
-        """
-        self.logger.info("Executing MOCK LLM analysis")
-        
-        # Simple heuristic for consistency score
-        consistency_score = 0.5
-        if primary_text and lp_copy:
-            # Count overlapping words (simple heuristic)
-            primary_words = set(primary_text.lower().split())
-            lp_words = set(lp_copy.lower().split())
-            overlap = len(primary_words & lp_words)
-            total = max(len(primary_words), len(lp_words))
-            if total > 0:
-                consistency_score = min(overlap / total, 1.0)
-        
-        return {
-            "creative_analysis": {
-                "hook_type": "benefit",
-                "primary_tone": "inspirational",
-                "detected_emotions": ["excitement", "trust"],
-                "target_audience_inferred": "entrepreneurs, business owners",
-                "pain_points_identified": ["time_consuming", "complexity"],
-                "benefits_identified": ["efficiency", "simplicity", "scalability"],
-            },
-            "message_consistency": {
-                "match_score": consistency_score,
-                "consistency_basis": f"Mock analysis based on {len(primary_text or '')} chars of primary text",
-                "key_alignment_points": ["efficiency", "simplicity"],
-                "mismatch_areas": [],
-            },
-            "recommendations": [
-                "Add customer testimonials or social proof",
-                "Emphasize limited-time offer or scarcity",
-                "Include specific metrics or quantifiable results",
-                "Simplify call-to-action",
-                "Improve mobile readability on landing page",
-            ],
-            "llm_model": "mock",
-            "processing_time_ms": 0,
-            "success": True,
-            "message": "Mock LLM analysis complete (Phase 2 implementation pending)"
-        }
-    
-    def _execute_gemini(
-        self,
-        image_paths: Optional[List[str]],
-        primary_text: Optional[str],
-        headline: Optional[str],
-        lp_copy: Optional[str]
-    ) -> Dict[str, Any]:
-        """
-        Real LLM analysis using Gemini 2.0 Flash.
-        
-        TODO: Implement
-        - Import google.generativeai
-        - Set GOOGLE_API_KEY from environment
-        - Build prompt with multimodal content
-        - Call model.generate_content()
-        - Parse JSON response
-        - Handle rate limits and timeouts
-        """
-        raise ProcessingError("Gemini 2.0 API not yet implemented (Phase 2)")
-
-
-# ===== Phase 2 Implementation Notes =====
-"""
-GEMINI INTEGRATION CHECKLIST (Phase 2):
-
-1. SETUP:
-   - pip install google-generativeai
-   - export GOOGLE_API_KEY="your-api-key"
-   
-2. PROMPT DESIGN:
-   - Creative Analysis Prompt:
-     "Analyze this creative for hook type, tone, emotions, target audience"
-   - Consistency Prompt:
-     "Compare ad text and LP copy, score alignment (0-1)"
-   - Recommendations Prompt:
-     "Based on analysis, suggest 3-5 improvements"
-
-3. MULTIMODAL INPUT:
-   - Load images via PIL
-   - Convert to base64 for API
-   - Include text and images in single request
-
-4. RESPONSE PARSING:
-   - Use JSON mode for structured output
-   - Validate response schema
-   - Extract confidence scores
-
-5. TESTING STRATEGY:
-   - Mock Gemini responses for unit tests
-   - Use seeded prompts for deterministic testing
-   - Integration tests with real API (optional)
-
-6. ERROR HANDLING:
-   - Catch API rate limits
-   - Implement exponential backoff
-   - Fallback to mock if API fails
-   - Log API usage
-
-7. PERFORMANCE:
-   - Cache results (same creative shouldn't be analyzed twice)
-   - Parallelize multi-image analysis
-   - Set reasonable timeouts (15s)
-"""
+    @staticmethod
+    def check_api_availability() -> bool:
+        """API キーが利用可能かチェック"""
+        return bool(GEMINI_API_KEY)
