@@ -441,3 +441,33 @@ TBD
 - Last Updated: 2026-06-23
 
 Happy analyzing! 噫
+
+
+## API エンドポイント（Phase 2a）
+
+### クイックスタート
+
+#### 1. サーバー起動
+`ash
+cd backend
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+``n
+#### 2. 分析実行
+`ash
+curl -X POST "http://127.0.0.1:8000/api/v1/specs/analyze" \
+  -F "input_file=@sample_image.png" \
+  -F "mode=file_only"
+``n
+#### 3. 一覧取得
+`ash
+curl "http://127.0.0.1:8000/api/v1/specs?skip=0&limit=10"
+``n
+#### 4. 単件取得
+`ash
+curl "http://127.0.0.1:8000/api/v1/specs/{asset_id}"
+``n
+#### 5. 削除
+`ash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/specs/{asset_id}"
+``n
+詳細は docs/api/endpoints_specification.md を参照してください。

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -46,7 +47,7 @@ async def analyze(
     input_file: UploadFile = File(...),
     lp_file: Optional[UploadFile] = None,
     kpi_file: Optional[UploadFile] = None,
-    mode: str = Query("file_plus_lp_plus_manual_kpi"),
+    mode: str = Form("file_plus_lp_plus_manual_kpi"),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
@@ -116,15 +117,21 @@ async def analyze(
             if latest:
                 version = latest.version + 1
             
+            import json
+            if hasattr(spec, "model_dump"):
+                spec_data_jsonable = spec.model_dump(mode="json")
+            else:
+                spec_data_jsonable = json.loads(spec.json())
+            
             # DB に保存
             db_record = repo.create(
                 asset_id=asset_id,
                 version=version,
                 format=spec.creative_core.format,
-                spec_data=spec.dict()
+                spec_data=spec_data_jsonable
             )
             
-            return spec.dict()
+            return spec_data_jsonable
         
         finally:
             # 一時ファイル削除
