@@ -471,3 +471,22 @@ curl "http://127.0.0.1:8000/api/v1/specs/{asset_id}"
 curl -X DELETE "http://127.0.0.1:8000/api/v1/specs/{asset_id}"
 ``n
 詳細は docs/api/endpoints_specification.md を参照してください。
+
+
+## Phase 2b: UI（Streamlit）
+
+### Streamlit UI の起動
+
+`ash
+cd ad-insight-spec
+streamlit run frontend/streamlit_app.py
+``n
+ブラウザで自動的に http://localhost:8501 が開きます。
+
+機能:
+- Analyze: ファイルアップロード → 分析実行 → 結果ダウンロード
+- List: 一覧取得（skip/limit）
+- Detail: Asset ID 指定で詳細表示（version 選択可能）
+- Delete: 論理削除（確認ダイアログ付き）
+
+前提: FastAPI サーバーが http://127.0.0.1:8000 で起動していること。
