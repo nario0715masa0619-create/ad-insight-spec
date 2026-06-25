@@ -135,7 +135,8 @@ class LLMService:
         
         for attempt in range(LLMService.MAX_RETRIES):
             try:
-                response = openai.ChatCompletion.create(
+                client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
                     model=LLMService.GPT_MODEL,
                     messages=[
                         {"role": "system", "content": "You are an expert ad creative analyst. Return only valid JSON."},
