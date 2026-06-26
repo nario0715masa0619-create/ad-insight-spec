@@ -71,3 +71,53 @@
 上記「必須項目」の 12 項目すべてが確認されたら、本番デプロイ可能と判定します。
 
 次段階項目は本番稼働開始後、段階的に実装してください。
+
+---
+
+## 具体的なデプロイ手順
+
+### 1. 初期化手順
+```bash
+# 依存ライブラリインストール
+pip install -r requirements.txt
+
+# DB テーブル初期化（SQLite または PostgreSQL）
+# SQLiteの場合: 初回起動時に自動生成されます。
+# PostgreSQLの場合: 事前にDBを作成し、AlembicやSQLスクリプトでテーブルを作成してください。
+
+# 外部依存ツールのインストール確認
+tesseract --version
+ffmpeg -version
+```
+
+### 2. Nginx ファイルサイズ上限設定案
+アップロードされる画像や動画ファイルサイズを許容するため、Nginx側で上限を設定します。
+```nginx
+server {
+    ...
+    client_max_body_size 50M;  # ファイルアップロード上限 50MB
+    ...
+}
+```
+※FastAPI側でも必要に応じてリクエストサイズやファイルサイズのバリデーションを行います。
+
+### 3. バックエンド起動コマンド（本番用）
+```bash
+export DEBUG=False
+export OPENAI_API_KEY="sk-..."
+export GEMINI_API_KEY="..."
+export DATABASE_URL="postgresql://user:pass@localhost/ad_insight"
+export CORS_ORIGINS="https://yourdomain.com"
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+### 4. フロントエンド起動コマンド（本番用）
+```bash
+streamlit run frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+```
+
+### 5. ヘルスチェック確認
+起動後、別ターミナルから以下のコマンドでバックエンドが正常に稼働しているか確認します。
+```bash
+curl http://localhost:8000/health
+```

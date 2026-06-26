@@ -58,6 +58,29 @@ Tesseract-OCR を使用し、画像または動画フレームからテキスト
 ### ConverterService
 各 Service から出力された解析結果を集約し、最終的な `AdInsightSpec v0.2` 準拠の JSON ディクショナリに変換します。
 
+### P0: 改善文章品質向上
+
+**スキーマ層**
+- `ImprovementComment`: 根拠・アクション・優先度を構造化
+- `LLMImprovementValidationError`: fail-soft 時のエラー構造
+
+**バリデーション層（llm_validator_service.py）**
+- 抽象語検知：「訴求力」「見栄え」など定義済みキーワードを検出
+- 根拠欠落検知：evidence フィールドが空でないか確認
+- 対象不明検知：target_scope が曖昧な表現（「全体」「複数」等）でないか確認
+- 矛盾検知：improvement_type と evidence が矛盾していないか確認
+- fail-soft: バリデーション失敗時も構造化エラーで安全に応答
+
+**LLM統合層（llm_service.py）**
+- `analyze_creative_improvements` メソッド：改善コメント生成専用
+- 3回再試行ロジック：API エラー時に自動リトライ
+- timeout 60秒、rate-limit 対応
+
+**Streamlit UI統合**
+- 「✨ 改善提案」セクション：上位3件を優先度ラベル付きで表示
+- 詳細展開：`st.expander` で根拠・アクションを表示
+- fail-soft 警告：`st.warning` で安全に表示
+
 ---
 
 ## 3. データベース設計
