@@ -116,7 +116,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 streamlit run frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
 ```
 
-### 5. システムデーモン (systemd) を用いた自動起動設定（本番推奨）
+### 5. 環境変数 Smoke Test の実行（本番前確認）
+バックエンド・フロントエンドを起動する前に、必須の環境変数が正しく認識されているかをテストします。機密情報は自動的にマスクされます。
+```bash
+# プロジェクトルートから実行
+export PYTHONPATH=backend
+python scripts/smoke_test_env.py
+```
+※ `PASSED` と表示されることを確認してから次の起動ステップへ進んでください。
+
+### 6. システムデーモン (systemd) を用いた自動起動設定（本番推奨）
 手動でのバックグラウンド起動 (`nohup` 等) は環境変数の欠落やプロセス監視の観点から非推奨です。
 リポジトリ内の `infra/systemd/` にあるテンプレートを使用して自動起動を設定してください。
 
@@ -135,7 +144,7 @@ streamlit run frontend/streamlit_app.py --server.port 8501 --server.address 0.0.
    sudo systemctl start fastapi streamlit
    ```
 
-### 6. ヘルスチェック確認
+### 7. ヘルスチェック確認
 起動後、別ターミナルから以下のコマンドでバックエンドが正常に稼働しているか確認します。
 ```bash
 curl http://localhost:8000/health
