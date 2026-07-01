@@ -161,3 +161,41 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
   2. ログ監視ツールで `error_code: VALIDATION_FAILED` 等の JSON 構造化ログを `request_id` や `trace_id` で検索・解読します。
   3. LLM API エラーの場合: API キーの有効性、レート制限、またはバックエンドの再試行設定を確認します。
   4. OCR エラーの場合: Tesseract の状態やシステムリソースを確認します。
+
+---
+
+## 8. 障害診断の最速フロー（Phase 1 診断チェックリスト）
+
+本番環境（特にGCP等）で予期せぬ挙動（例：分析がスキップされる、UIが更新されない等）が発生した場合、以下の30分以内チェックリストに沿って迅速に原因を切り分けます。
+
+### 30分以内チェックリスト
+- [ ] **1. FastAPI プロセス環境確認 (5分)**: FastAPIが意図した環境変数（特に `.env` パス）で起動しているか確認する。
+- [ ] **2. systemd サービス状態確認 (5分)**: サービスが Active になっているか、エラーで再起動を繰り返していないか確認する。
+- [ ] **3. LLM 呼び出しログ確認 (10分)**: `OPENAI_API_KEY` の読み込みエラーや Pydantic 関連のエラーが出ていないか確認する。
+- [ ] **4. Streamlit UI 動作確認 (10分)**: ネットワーク接続や UI のリアルタイムログから処理の停止箇所を特定する。
+
+### 実環境でのデバッグコマンド集
+
+#### systemd 環境変数・状態確認コマンド
+```bash
+# サービスのステータスと直近のログを確認
+sudo systemctl status fastapi.service
+
+# systemd サービスに渡されている環境変数を確認
+sudo systemctl show fastapi.service --property=Environment,EnvironmentFile
+```
+
+#### FastAPI プロセス環境確認コマンド
+```bash
+# FastAPI (uvicorn) プロセスの PID を特定
+pgrep -f uvicorn
+
+# 特定した PID (例: 1234) の環境変数を出力（APIキー等を安全に確認）
+sudo cat /proc/1234/environ | tr '\0' '\n' | grep -E "OPENAI|GEMINI|env"
+```
+
+#### LLM 呼び出し確認ログコマンド
+```bash
+# FastAPI のエラーログから LLM 関連のスキップや例外を抽出
+cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
+```
