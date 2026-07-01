@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 env_paths = [
     r"C:\Users\nario\.ad-insight-spec\.env",
+    "/opt/ad-insight-spec/backend/.env",
     "/home/nario_o_0715_masa_0619/.ad-insight-spec/.env",
     "/root/.ad-insight-spec/.env",
     ".env"

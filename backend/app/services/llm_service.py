@@ -14,30 +14,7 @@ from app.schemas.llm_response import LLMResponseSchema, CreativeCoreSchema, Impr
 from app.services.llm_validator_service import LLMValidatorService
 
 logger = logging.getLogger(__name__)
-
-# .env から API キーを読み込む
-env_paths = [
-    r"C:\Users\nario\.ad-insight-spec\.env",
-    "/home/nario_o_0715_masa_0619/.ad-insight-spec/.env",
-    "/root/.ad-insight-spec/.env",
-    ".env"
-]
-for path in env_paths:
-    if os.path.exists(path):
-        load_dotenv(dotenv_path=path)
-        break
-else:
-    load_dotenv()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
+# config.py から動的に読み込むため、トップレベルでの API キー初期化を削除
 class LLMService:
     """GPT-4o（本命）と Gemini 2.0 Flash（比較対象）のデュアル実装"""
     
@@ -141,7 +118,10 @@ class LLMService:
         Returns:
             LLMResponseSchema
         """
-        if not OPENAI_API_KEY:
+        from app.config import get_settings
+        settings = get_settings()
+        openai_api_key = settings.OPENAI_API_KEY
+        if not openai_api_key:
             return LLMResponseSchema(
                 success=False,
                 model=LLMService.GPT_MODEL,
@@ -158,7 +138,7 @@ class LLMService:
             try:
                 proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
                 http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
-                client = openai.OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+                client = openai.OpenAI(api_key=openai_api_key, http_client=http_client)
                 response = client.chat.completions.create(
                     model=LLMService.GPT_MODEL,
                     messages=[
@@ -206,13 +186,18 @@ class LLMService:
         Returns:
             LLMResponseSchema
         """
-        if not GEMINI_API_KEY:
+        from app.config import get_settings
+        settings = get_settings()
+        gemini_api_key = settings.GEMINI_API_KEY
+        if not gemini_api_key:
             return LLMResponseSchema(
                 success=False,
                 model=LLMService.GEMINI_MODEL,
                 creative_core=None,
                 error_details="GEMINI_API_KEY is not set in environment variables"
             )
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_api_key)
         
         prompt = LLMService.ANALYSIS_PROMPT_TEMPLATE.format(
             image_description=image_description or "なし",
@@ -317,7 +302,10 @@ class LLMService:
         """
         LLM で改善コメントを生成（再試行・バリデーション対応）
         """
-        if not OPENAI_API_KEY and model == "gpt":
+        from app.config import get_settings
+        settings = get_settings()
+        openai_api_key = settings.OPENAI_API_KEY
+        if not openai_api_key and model == "gpt":
             return LLMImprovementValidationError(
                 success=False,
                 error_code="API_KEY_MISSING",
@@ -335,7 +323,7 @@ class LLMService:
                 if model == "gpt":
                     proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
                     http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
-                    client = openai.OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+                    client = openai.OpenAI(api_key=openai_api_key, http_client=http_client)
                     response = client.chat.completions.create(
                         model=LLMService.GPT_MODEL,
                         messages=[
