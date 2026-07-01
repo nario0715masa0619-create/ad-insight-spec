@@ -243,7 +243,7 @@ class AnalysisOrchestrator:
             
             # P0 改善コメント生成の追加呼び出し
             improvements_result = LLMService.analyze_creative_improvements(
-                creative_data=cc_dict,
+                creative_analysis=cc_dict,
                 model=llm_model
             )
             

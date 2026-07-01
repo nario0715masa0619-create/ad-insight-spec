@@ -39,4 +39,5 @@ pytesseract>=0.3.10
 
 pydantic-settings>=2.0.0
 python-json-logger>=2.0.4
-streamlit>=1.28.0
+streamlit==1.56.0  # starlette<0.28.0(FastAPI 0.104.1制約)と互換のため固定
+starlette==0.27.0
