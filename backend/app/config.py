@@ -4,19 +4,12 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 from dotenv import load_dotenv
 
-env_paths = [
-    r"C:\Users\nario\.ad-insight-spec\.env",
-    "/opt/ad-insight-spec/backend/.env",
-    "/home/nario_o_0715_masa_0619/.ad-insight-spec/.env",
-    "/root/.ad-insight-spec/.env",
-    ".env"
-]
-for path in env_paths:
-    if os.path.exists(path):
-        load_dotenv(dotenv_path=path)
-        break
-else:
-    load_dotenv()
+# 環境変数を優先する。systemd の EnvironmentFile 経由で既に os.environ に
+# 値が入っている場合、load_dotenv() は既存の値を上書きしない（override=False）。
+# cwd 依存を避けるため、参照先は絶対パス1箇所に固定する。
+_ENV_FILE = "/etc/ad-insight-spec/.env"
+if os.path.exists(_ENV_FILE):
+    load_dotenv(dotenv_path=_ENV_FILE)
 
 class Settings(BaseSettings):
     """アプリケーション設定（環境変数ベース）"""
@@ -50,7 +43,8 @@ class Settings(BaseSettings):
     API_RATE_LIMIT: int = int(os.getenv("API_RATE_LIMIT", "100"))  # requests per minute
     
     class Config:
-        env_file = ".env"
+        env_file = None  # dotenv 読込は上記で明示的に行うため、pydantic-settings 自身の
+                          # env_file 自動探索（.env 内の未知キーで extra_forbidden クラッシュの原因）を無効化
         case_sensitive = True
 
 @lru_cache()
