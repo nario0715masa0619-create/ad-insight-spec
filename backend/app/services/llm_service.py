@@ -113,8 +113,16 @@ class LLMService:
         
         # Schema 検証
         try:
-            creative_core = CreativeCoreSchema(**data)
-            return creative_core.dict()
+            # Pydantic v2 互換のメソッドがあるかチェック
+            if hasattr(CreativeCoreSchema, "model_validate"):
+                creative_core = CreativeCoreSchema.model_validate(data)
+            else:
+                creative_core = CreativeCoreSchema(**data)
+                
+            if hasattr(creative_core, "model_dump"):
+                return creative_core.model_dump()
+            else:
+                return creative_core.dict()
         except Exception as e:
             raise ValueError(f"Schema validation failed: {str(e)}")
     
