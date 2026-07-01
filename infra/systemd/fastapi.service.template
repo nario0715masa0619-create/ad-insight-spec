@@ -1,0 +1,24 @@
+[Unit]
+Description=Ad-Insight-Spec FastAPI Backend Service
+After=network.target
+
+[Service]
+# プロセスを実行するユーザー（実環境に合わせて変更してください。例: nario_o_0715_masa_0619）
+User={{APP_USER}}
+Group={{APP_USER}}
+
+# プロジェクトのルートディレクトリ
+WorkingDirectory={{APP_DIR}}/backend
+
+# 仮想環境の python 実行パスと Uvicorn 起動オプション
+ExecStart={{APP_DIR}}/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 環境変数ファイルの絶対パス（本番環境では /etc/ad-insight-spec/.env を推奨）
+EnvironmentFile={{ENV_FILE_PATH}}
+
+# 自動再起動設定
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
