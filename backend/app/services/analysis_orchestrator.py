@@ -236,7 +236,24 @@ class AnalysisOrchestrator:
                 model=llm_model
             )
             
-            cc_dict = llm_result.creative_core.model_dump() if llm_result.creative_core else {}
+            def _dump_model(m):
+                return m.model_dump() if hasattr(m, "model_dump") else m.dict()
+            
+            cc_dict = _dump_model(llm_result.creative_core) if llm_result.creative_core else {}
+            
+            # P0 改善コメント生成の追加呼び出し
+            improvements_result = LLMService.analyze_creative_improvements(
+                creative_data=cc_dict,
+                model=llm_model
+            )
+            
+            from app.schemas.llm_response import LLMImprovementValidationError
+            if isinstance(improvements_result, LLMImprovementValidationError):
+                improvements_data = None
+                improvements_error = _dump_model(improvements_result)
+            else:
+                improvements_data = _dump_model(improvements_result)
+                improvements_error = None
             
             self.llm_result = {
                 "creative_core": {
@@ -248,7 +265,9 @@ class AnalysisOrchestrator:
                     "llm_success": llm_result.success,
                     "llm_retry_count": llm_result.retry_count,
                     "llm_error": llm_result.error_details
-                }
+                },
+                "improvements": improvements_data,
+                "improvements_error": improvements_error
             }
             logger.info("LLM analysis complete")
         except Exception as e:
