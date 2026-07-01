@@ -199,3 +199,45 @@ sudo cat /proc/1234/environ | tr '\0' '\n' | grep -E "OPENAI|GEMINI|env"
 # FastAPI のエラーログから LLM 関連のスキップや例外を抽出
 cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
 ```
+
+---
+
+## 9. AIS 1クリック運用ツール（Windows）
+
+本番 GCP VM（`instance-20260626-073827` / `asia-northeast1-a`）上の FastAPI（`ad-insight-fastapi.service`）・Streamlit（`ad-insight-streamlit.service`）を、Windows端末からダブルクリックのみで操作するための最小構成ツールです。SSHは `gcloud compute ssh` の鍵認証をそのまま利用し、新規の鍵・PAT・sudoers設定は追加していません。
+
+### 9.1 配置場所
+- **Windows側（利用者が操作するファイル）**: `D:\ClaudeCodeWork\AIS\`
+  - `AIS_Open.bat`
+  - `AIS_Status.bat`
+  - `AIS_Restart.bat`
+- **VM側補助スクリプト（bat から SSH 経由で呼び出す実処理、gitリポジトリ管理外）**: `/home/nario/ais-scripts/`
+  - `ais_status.sh`
+  - `ais_restart.sh`
+
+### 9.2 各ツールの役割
+
+| ファイル | 役割 | 内部処理 |
+|---|---|---|
+| `AIS_Open.bat` | 本番UI（Streamlit）をブラウザで開く | `start "" "http://34.84.24.83:8501"` |
+| `AIS_Status.bat` | 両serviceの状態と `/health` を確認する | SSH経由で `/home/nario/ais-scripts/ais_status.sh` を実行し、`systemctl status ad-insight-fastapi` / `ad-insight-streamlit` と `curl http://127.0.0.1:8000/health` の結果を表示 |
+| `AIS_Restart.bat` | 両serviceを再起動し、直後の状態を確認する | SSH経由で `/home/nario/ais-scripts/ais_restart.sh` を実行し、`systemctl restart` 後に status と `/health` を表示 |
+
+補足: 本番環境には現状リバースプロキシ・独自ドメインが存在しないため、`http://34.84.24.83:8501` が正式なアクセスURLを兼ねています。
+
+### 9.3 利用手順（平常時）
+1. `AIS_Open.bat` をダブルクリックする
+2. ブラウザでStreamlit UIが開けば作業開始
+
+### 9.4 障害時の使い分け
+1. UIが開かない・分析が動かない等の異常に気づいたら、まず **`AIS_Status.bat`** をダブルクリックし、以下を確認する
+   - `ad-insight-fastapi` / `ad-insight-streamlit` がともに `active (running)` か
+   - `/health` が `{"status":"healthy",...}` を返しているか
+2. いずれかが異常（`failed` / `activating (auto-restart)` 等）であれば **`AIS_Restart.bat`** をダブルクリックする
+   - 両serviceを再起動し、そのまま status と `/health` を表示して結果を確認できる
+3. 再起動後も改善しない場合は、本ドキュメント「8. 障害診断の最速フロー」に従い詳細調査を行う（ログ確認、`.env`/systemd設定確認等）。1クリックツールは一次切り分け・簡易復旧用であり、依存関係やコードレベルの問題解決は対象外。
+
+### 9.5 注意事項
+- どちらの bat も実行結果はウィンドウ内にそのまま表示され、最後にキー入力待ちになるため、閉じる前に内容を確認できる
+- secrets（APIキー等）は bat・VM側スクリプトいずれにも含まれていない
+- `AIS_Restart.bat` は対象2 service（`ad-insight-fastapi`, `ad-insight-streamlit`）以外には影響しない
