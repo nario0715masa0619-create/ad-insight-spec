@@ -3,9 +3,10 @@ import json
 import re
 from typing import Optional, Literal
 from dotenv import load_dotenv
+import httpx
 import openai
 import google.generativeai as genai
-from pydantic import ValidationError
+from pydantic.v1 import ValidationError
 from typing import Union
 import logging
 
@@ -15,9 +16,16 @@ from app.services.llm_validator_service import LLMValidatorService
 logger = logging.getLogger(__name__)
 
 # .env から API キーを読み込む
-env_path = r"C:\Users\nario\.ad-insight-spec\.env"
-if os.path.exists(env_path):
-    load_dotenv(dotenv_path=env_path)
+env_paths = [
+    r"C:\Users\nario\.ad-insight-spec\.env",
+    "/home/nario_o_0715_masa_0619/.ad-insight-spec/.env",
+    "/root/.ad-insight-spec/.env",
+    ".env"
+]
+for path in env_paths:
+    if os.path.exists(path):
+        load_dotenv(dotenv_path=path)
+        break
 else:
     load_dotenv()
 
@@ -106,8 +114,8 @@ class LLMService:
         # Schema 検証
         try:
             creative_core = CreativeCoreSchema(**data)
-            return creative_core.model_dump()
-        except ValidationError as e:
+            return creative_core.dict()
+        except Exception as e:
             raise ValueError(f"Schema validation failed: {str(e)}")
     
     @staticmethod
@@ -140,7 +148,9 @@ class LLMService:
         
         for attempt in range(LLMService.MAX_RETRIES):
             try:
-                client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+                http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
+                client = openai.OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
                 response = client.chat.completions.create(
                     model=LLMService.GPT_MODEL,
                     messages=[
@@ -315,7 +325,9 @@ class LLMService:
             try:
                 # LLM 呼び出し
                 if model == "gpt":
-                    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+                    http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
+                    client = openai.OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
                     response = client.chat.completions.create(
                         model=LLMService.GPT_MODEL,
                         messages=[

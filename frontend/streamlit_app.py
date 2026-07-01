@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
 
 # ページ設定
@@ -8,7 +9,7 @@ st.set_page_config(page_title="Ad-Insight-Spec UI", layout="wide")
 st.title("📊 Ad-Insight-Spec")
 
 # API ベース URL（環境に応じて変更可）
-API_BASE_URL = "http://127.0.0.1:8000/api/v1/specs"
+API_BASE_URL = "http://localhost:8000/api/v1/specs"
 
 # タブ 4 つ
 tab1, tab2, tab3, tab4 = st.tabs(["📤 Analyze", "📋 List", "🔍 Detail", "🗑️ Delete"])
@@ -22,12 +23,28 @@ with tab1:
     if st.button("🚀 分析実行"):
         if uploaded_file:
             st.info("🔄 分析中...")
+            
+            log_container = st.container()
+            with log_container:
+                st.write("📋 処理ログ：")
+                log_output = st.empty()
+                logs = []
+                
+                def add_log(msg):
+                    logs.append(f"- {msg}")
+                    log_output.write("\n".join(logs))
+                
+                add_log("📤 API にファイルを送信中...")
+                add_log("⏳ サーバーで処理中...（最大60秒）")
+
             try:
                 files = {"input_file": uploaded_file}
                 data = {"mode": mode}
                 response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=60)
                 
                 if response.status_code == 200:
+                    add_log("✅ 分析完了")
+                    add_log("📊 結果を処理中...")
                     result = response.json()
                     st.success("✅ 分析完了！")
                     
@@ -57,7 +74,38 @@ with tab1:
                         with st.expander("AI Labels"):
                             st.write(creative_core.get("ai_labels", []))
                     
+                    # 全体 JSON 表示 (既存)
+                    # 改善提案 (P0 追加機能)
+                    if diagnostics:
+                        st.markdown("### ✨ 改善提案")
+                        improvements_error = diagnostics.get("improvements_error")
+                        improvements = diagnostics.get("improvements")
+                        
+                        if improvements_error:
+                            st.warning(f"⚠️ 改善コメント生成に失敗しました (Error: {improvements_error.get('error_code', 'UNKNOWN')})")
+                        elif improvements and improvements.get("comments"):
+                            comments = improvements.get("comments", [])
+                            for i, c in enumerate(comments[:3]):
+                                priority = c.get("priority", "N/A")
+                                if priority == "P0":
+                                    badge = "🔴 **P0 (必須)**"
+                                elif priority == "P1":
+                                    badge = "🟠 **P1 (強く推奨)**"
+                                elif priority == "P2":
+                                    badge = "🟡 **P2 (推奨)**"
+                                else:
+                                    badge = f"🔵 **{priority}**"
+                                
+                                st.write(f"{badge} | **{c.get('issue_summary', 'No summary')}**")
+                                with st.expander("詳細を見る"):
+                                    st.write(f"**対象箇所**: {c.get('target_scope', 'N/A')}")
+                                    st.write(f"**根拠**: {c.get('evidence', 'N/A')}")
+                                    st.write(f"**アクション**: {c.get('actionable_advice', 'N/A')}")
+                        elif not improvements:
+                            st.info("改善コメントはありません。")
+                    
                     # 全体 JSON 表示
+
                     st.markdown("### 📄 完全な分析結果（JSON）")
                     st.json(result)
                     
@@ -68,8 +116,10 @@ with tab1:
                         mime="application/json"
                     )
                 else:
+                    add_log(f"❌ エラー: {response.status_code}")
                     st.error(f"❌ エラー: {response.status_code}\n{response.text}")
             except Exception as e:
+                add_log(f"❌ エラー内容: {str(e)}")
                 st.error(f"❌ API 呼び出しエラー: {str(e)}")
         else:
             st.warning("⚠️ ファイルをアップロードしてください")

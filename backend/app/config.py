@@ -2,6 +2,20 @@ import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 from typing import Optional
+from dotenv import load_dotenv
+
+env_paths = [
+    r"C:\Users\nario\.ad-insight-spec\.env",
+    "/home/nario_o_0715_masa_0619/.ad-insight-spec/.env",
+    "/root/.ad-insight-spec/.env",
+    ".env"
+]
+for path in env_paths:
+    if os.path.exists(path):
+        load_dotenv(dotenv_path=path)
+        break
+else:
+    load_dotenv()
 
 class Settings(BaseSettings):
     """アプリケーション設定（環境変数ベース）"""
