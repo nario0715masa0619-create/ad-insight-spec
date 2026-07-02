@@ -67,14 +67,31 @@ with tab1:
                     creative_core = result.get("creative_core", {})
                     if creative_core:
                         st.markdown("### 🎨 CreativeCore 分析結果")
-                        with st.expander("Visuals"):
-                            st.json(creative_core.get("visuals", {}))
-                        with st.expander("Tone"):
-                            st.json(creative_core.get("tone", {}))
-                        with st.expander("AI Labels"):
-                            st.write(creative_core.get("ai_labels", []))
-                    
-                    # 全体 JSON 表示 (既存)
+                        cc_visuals = creative_core.get("visuals", {}) or {}
+                        cc_tone = creative_core.get("tone", {}) or {}
+                        cc_ai_labels = creative_core.get("ai_labels", []) or []
+
+                        cc_colors = "、".join(cc_visuals.get("dominant_colors", []) or []) or "情報なし"
+                        st.write(
+                            f"**🖼️ ビジュアル**: 色調は{cc_colors}。"
+                            f"構図は{cc_visuals.get('composition', 'N/A')}。"
+                            f"スタイルは{cc_visuals.get('style', 'N/A')}。"
+                            f"視認性は{cc_visuals.get('clarity', 'N/A')}。"
+                        )
+
+                        cc_tones = "、".join(cc_tone.get("primary_tone", []) or []) or "情報なし"
+                        st.write(
+                            f"**🎭 トーン**: {cc_tones}を基調とし、"
+                            f"訴求は{cc_tone.get('emotional_appeal', 'N/A')}型。"
+                            f"CTAの強さは{cc_tone.get('call_to_action', 'N/A')}。"
+                        )
+
+                        if cc_ai_labels:
+                            st.write(f"**🏷️ AIラベル**: {', '.join(cc_ai_labels)}")
+
+                        with st.expander("🔧 Visuals / Tone / Labels（JSON・デバッグ用）", expanded=False):
+                            st.json({"visuals": cc_visuals, "tone": cc_tone, "ai_labels": cc_ai_labels})
+
                     # 改善提案 (P0 追加機能)
                     if diagnostics:
                         st.markdown("### ✨ 改善提案")
