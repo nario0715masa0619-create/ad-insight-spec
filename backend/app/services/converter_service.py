@@ -277,7 +277,9 @@ class ConverterService(BaseService):
             "llm_model": creative_core.get("llm_model"),
             "llm_success": creative_core.get("llm_success"),
             "llm_retry_count": creative_core.get("llm_retry_count"),
-            "llm_error": creative_core.get("llm_error")
+            "llm_error": creative_core.get("llm_error"),
+            "improvements": llm_result.get("improvements"),
+            "improvements_error": llm_result.get("improvements_error")
         }
     
     def _populate_views(
