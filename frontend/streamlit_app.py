@@ -154,28 +154,63 @@ with tab2:
         skip = st.number_input("Skip", min_value=0, value=0, step=10)
     with col2:
         limit = st.number_input("Limit", min_value=1, value=10, step=5)
-    
+
     if st.button("📊 一覧取得"):
         try:
             response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
             if response.status_code == 200:
                 results = response.json()
+                st.session_state["list_items"] = results.get("items", [])
                 st.success(f"✅ {len(results.get('items', []))} 件取得")
-                for item in results.get('items', []):
-                    st.write(f"**Asset ID:** `{item.get('asset_meta', {}).get('asset_id')}`")
-                    st.write(f"Format: {item.get('creative_core', {}).get('format')} | ")
-                    st.divider()
             else:
                 st.error(f"❌ エラー: {response.status_code}")
         except Exception as e:
             st.error(f"❌ API 呼び出しエラー: {str(e)}")
 
+    for item in st.session_state.get("list_items", []):
+        item_asset_id = item.get("asset_meta", {}).get("asset_id", "unknown")
+        item_format = item.get("creative_core", {}).get("format", "N/A")
+        item_diag = item.get("diagnostics", {}) or {}
+        item_improvements = item_diag.get("improvements")
+        item_summary = item_improvements.get("summary") if item_improvements else None
+        item_comments = item_improvements.get("comments") if item_improvements else None
+        item_first_comment = item_comments[0] if item_comments else None
+
+        with st.container(border=True):
+            st.write(f"**🆔 {item_asset_id}**（`{item_format}`）")
+            if item_summary:
+                st.write(f"📝 {item_summary}")
+            else:
+                st.write("📝 改善コメントはありません。")
+            if item_first_comment:
+                st.write(
+                    f"優先度: **{item_first_comment.get('priority', 'N/A')}** | "
+                    f"次アクション: {item_first_comment.get('recommended_action', 'N/A')}"
+                )
+            if st.button("🔍 Detail で見る", key=f"select_{item_asset_id}"):
+                st.session_state["selected_asset_id"] = item_asset_id
+                st.info("「🔍 Detail」タブに切り替えると、この Asset が選択された状態で表示されます。")
+            with st.expander("🔧 JSON（デバッグ用）", expanded=False):
+                st.json(item)
+            st.divider()
+
 # ============ TAB 3: Detail ============
 with tab3:
     st.header("詳細表示")
-    asset_id = st.text_input("Asset ID を入力")
+
+    list_items = st.session_state.get("list_items", [])
+    asset_options = [it.get("asset_meta", {}).get("asset_id", "unknown") for it in list_items]
+
+    if asset_options:
+        selected_default = st.session_state.get("selected_asset_id")
+        default_index = asset_options.index(selected_default) if selected_default in asset_options else 0
+        asset_id = st.selectbox("Asset を選択", asset_options, index=default_index)
+    else:
+        st.info("先に「📋 List」タブで一覧を取得すると、ここで Asset を選択できるようになります。")
+        asset_id = st.text_input("Asset ID を直接入力（List 未取得時のフォールバック）")
+
     version = st.number_input("Version (オプション)", min_value=1, value=1, step=1)
-    
+
     if st.button("🔍 詳細取得"):
         if asset_id:
             try:
@@ -184,7 +219,21 @@ with tab3:
                 if response.status_code == 200:
                     detail = response.json()
                     st.success("✅ 詳細取得完了")
-                    st.json(detail)
+
+                    detail_diag = detail.get("diagnostics", {}) or {}
+                    detail_improvements = detail_diag.get("improvements")
+                    if detail_improvements and detail_improvements.get("summary"):
+                        st.write(f"**📝 1行要約**: {detail_improvements['summary']}")
+                    if detail_improvements and detail_improvements.get("comments"):
+                        st.markdown("### ✨ 改善ポイント")
+                        for c in detail_improvements["comments"][:3]:
+                            st.write(f"- **{c.get('priority', 'N/A')}** {c.get('issue_summary', 'No summary')}")
+                            st.write(f"  根拠: {c.get('evidence', 'N/A')} | 次にやること: {c.get('recommended_action', 'N/A')}")
+                    elif not detail_improvements:
+                        st.info("改善コメントはありません。")
+
+                    with st.expander("🔧 完全な分析結果（JSON・デバッグ用）", expanded=False):
+                        st.json(detail)
                 else:
                     st.error(f"❌ エラー: {response.status_code}\n{response.text}")
             except Exception as e:
