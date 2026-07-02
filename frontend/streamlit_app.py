@@ -80,9 +80,16 @@ with tab1:
                         st.markdown("### ✨ 改善提案")
                         improvements_error = diagnostics.get("improvements_error")
                         improvements = diagnostics.get("improvements")
-                        
+
+                        if improvements and improvements.get("summary"):
+                            st.write(f"**📝 1行要約**: {improvements['summary']}")
+
                         if improvements_error:
                             st.warning(f"⚠️ 改善コメント生成に失敗しました (Error: {improvements_error.get('error_code', 'UNKNOWN')})")
+                            reason = improvements_error.get("reason")
+                            if reason:
+                                st.write(f"**理由**: {reason}")
+                            st.write("**次のアクション**: 時間をおいて再度分析を実行するか、上記 CreativeCore 分析結果（トーン・ビジュアル）を参考に改善を検討してください。")
                         elif improvements and improvements.get("comments"):
                             comments = improvements.get("comments", [])
                             for i, c in enumerate(comments[:3]):
@@ -95,19 +102,19 @@ with tab1:
                                     badge = "🟡 **P2 (推奨)**"
                                 else:
                                     badge = f"🔵 **{priority}**"
-                                
+
                                 st.write(f"{badge} | **{c.get('issue_summary', 'No summary')}**")
                                 with st.expander("詳細を見る"):
                                     st.write(f"**対象箇所**: {c.get('target_scope', 'N/A')}")
                                     st.write(f"**根拠**: {c.get('evidence', 'N/A')}")
-                                    st.write(f"**アクション**: {c.get('actionable_advice', 'N/A')}")
+                                    st.write(f"**次にやること**: {c.get('recommended_action', 'N/A')}")
                         elif not improvements:
                             st.info("改善コメントはありません。")
                     
-                    # 全体 JSON 表示
+                    # 全体 JSON 表示（デバッグ用・折りたたみ）
 
-                    st.markdown("### 📄 完全な分析結果（JSON）")
-                    st.json(result)
+                    with st.expander("🔧 完全な分析結果（JSON・デバッグ用）", expanded=False):
+                        st.json(result)
                     
                     st.download_button(
                         label="📥 結果をダウンロード",
