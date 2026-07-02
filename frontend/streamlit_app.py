@@ -261,7 +261,15 @@ with tab3:
 # ============ TAB 4: Delete ============
 with tab4:
     st.header("削除")
-    asset_id_del = st.text_input("削除対象の Asset ID")
+
+    del_list_items = st.session_state.get("list_items", [])
+    del_asset_options = [it.get("asset_meta", {}).get("asset_id", "unknown") for it in del_list_items]
+
+    if del_asset_options:
+        asset_id_del = st.selectbox("削除対象の Asset を選択", del_asset_options, key="delete_asset_select")
+    else:
+        st.info("先に「📋 List」タブで一覧を取得すると、ここで Asset を選択できるようになります。")
+        asset_id_del = st.text_input("削除対象の Asset ID を直接入力（List 未取得時のフォールバック）")
     
     if st.button("🗑️ 削除実行", type="secondary"):
         if asset_id_del:
