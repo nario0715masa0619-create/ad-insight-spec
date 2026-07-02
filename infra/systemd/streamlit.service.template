@@ -1,11 +1,12 @@
 [Unit]
-Description=Ad-Insight-Spec Streamlit Frontend Service
+Description=Ad-Insight-Spec Streamlit Frontend
 After=network.target
 
 [Service]
+Type=simple
+
 # プロセスを実行するユーザー（実環境に合わせて変更してください。例: nario_o_0715_masa_0619）
 User={{APP_USER}}
-Group={{APP_USER}}
 
 # プロジェクトのルートディレクトリ
 WorkingDirectory={{APP_DIR}}
@@ -13,12 +14,14 @@ WorkingDirectory={{APP_DIR}}
 # 仮想環境の python (streamlit) 実行パスと起動オプション
 ExecStart={{APP_DIR}}/venv/bin/streamlit run frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
 
-# APIの接続先などの環境変数を指定する場合
-Environment="API_BASE_URL=http://localhost:8000/api/v1/specs"
+# 環境変数ファイルの絶対パス（本番環境では /etc/ad-insight-spec/.env を推奨）
+# 注: API_BASE_URL はアプリコード側にハードコードされており環境変数化されていないため、
+# ここでは設定しない（設定しても読み込まれない）
+EnvironmentFile={{ENV_FILE_PATH}}
 
 # 自動再起動設定
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

@@ -129,19 +129,22 @@ python scripts/smoke_test_env.py
 手動でのバックグラウンド起動 (`nohup` 等) は環境変数の欠落やプロセス監視の観点から非推奨です。
 リポジトリ内の `infra/systemd/` にあるテンプレートを使用して自動起動を設定してください。
 
+このテンプレートは、本番VMで実際に稼働・検証済みの構成（`WorkingDirectory` をリポジトリルートにし、`PYTHONPATH` で `backend` を解決する方式）と一致させてあります。**リポジトリの `infra/systemd/*.template` を正（canonical source）とし、VM上の実体ユニットファイルとの乖離が生じないようにしてください。** テンプレートを更新した場合は、本番VM側の `/etc/systemd/system/*.service` にも反映し、`daemon-reload` と対象サービスの再起動・状態確認まで行うこと。
+
 **設定手順:**
-1. テンプレートを systemd のディレクトリにコピーします。
+1. テンプレートを systemd のディレクトリにコピーします（サービス名は `ad-insight-fastapi` / `ad-insight-streamlit` で統一）。
    ```bash
-   sudo cp infra/systemd/fastapi.service.template /etc/systemd/system/fastapi.service
-   sudo cp infra/systemd/streamlit.service.template /etc/systemd/system/streamlit.service
+   sudo cp infra/systemd/fastapi.service.template /etc/systemd/system/ad-insight-fastapi.service
+   sudo cp infra/systemd/streamlit.service.template /etc/systemd/system/ad-insight-streamlit.service
    ```
-2. コピーしたファイルを開き、`{{APP_USER}}`, `{{APP_DIR}}`, `{{ENV_FILE_PATH}}` を実際の環境（例: `nario_o_0715_masa_0619`, `/opt/ad-insight-spec` など）に合わせて書き換えます。
+2. コピーしたファイルを開き、`{{APP_USER}}`, `{{APP_DIR}}`, `{{ENV_FILE_PATH}}` を実際の環境（例: `nario`, `/opt/ad-insight-spec`, `/etc/ad-insight-spec/.env` など）に合わせて書き換えます。
 3. `EnvironmentFile` で指定したパス（例: `/etc/ad-insight-spec/.env`）に `.env` ファイルを配置し、アクセス権限を適切に設定します。
 4. systemd に設定を反映させ、自動起動を有効化します。
    ```bash
    sudo systemctl daemon-reload
-   sudo systemctl enable fastapi streamlit
-   sudo systemctl start fastapi streamlit
+   sudo systemctl enable ad-insight-fastapi ad-insight-streamlit
+   sudo systemctl start ad-insight-fastapi ad-insight-streamlit
+   sudo systemctl status ad-insight-fastapi ad-insight-streamlit --no-pager
    ```
 
 ### 7. ヘルスチェック確認

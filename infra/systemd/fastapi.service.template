@@ -1,14 +1,17 @@
 [Unit]
-Description=Ad-Insight-Spec FastAPI Backend Service
+Description=Ad-Insight-Spec FastAPI Backend
 After=network.target
 
 [Service]
+Type=simple
+
 # プロセスを実行するユーザー（実環境に合わせて変更してください。例: nario_o_0715_masa_0619）
 User={{APP_USER}}
-Group={{APP_USER}}
 
-# プロジェクトのルートディレクトリ
-WorkingDirectory={{APP_DIR}}/backend
+# プロジェクトのルートディレクトリ（backend ではなくリポジトリルート。
+# PYTHONPATH で backend を解決するため、cwd 依存を避けられる）
+WorkingDirectory={{APP_DIR}}
+Environment=PYTHONPATH={{APP_DIR}}/backend
 
 # 仮想環境の python 実行パスと Uvicorn 起動オプション
 ExecStart={{APP_DIR}}/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -18,7 +21,7 @@ EnvironmentFile={{ENV_FILE_PATH}}
 
 # 自動再起動設定
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
