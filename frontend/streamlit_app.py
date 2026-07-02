@@ -237,10 +237,39 @@ with tab3:
                     detail = response.json()
                     st.success("✅ 詳細取得完了")
 
+                    detail_asset_meta = detail.get("asset_meta", {}) or {}
+                    detail_creative_core = detail.get("creative_core", {}) or {}
                     detail_diag = detail.get("diagnostics", {}) or {}
                     detail_improvements = detail_diag.get("improvements")
+
+                    st.write(
+                        f"**🆔 Asset ID**: {detail_asset_meta.get('asset_id', asset_id)}"
+                        f"（`{detail_creative_core.get('format', 'N/A')}`）"
+                    )
+
                     if detail_improvements and detail_improvements.get("summary"):
                         st.write(f"**📝 1行要約**: {detail_improvements['summary']}")
+
+                    detail_visuals = detail_creative_core.get("visuals", {}) or {}
+                    detail_tone = detail_creative_core.get("tone", {}) or {}
+                    detail_ai_labels = detail_creative_core.get("ai_labels", []) or []
+                    if detail_visuals or detail_tone or detail_ai_labels:
+                        detail_colors = "、".join(detail_visuals.get("dominant_colors", []) or []) or "情報なし"
+                        st.write(
+                            f"**🖼️ ビジュアル**: 色調は{detail_colors}。"
+                            f"構図は{detail_visuals.get('composition', 'N/A')}。"
+                            f"スタイルは{detail_visuals.get('style', 'N/A')}。"
+                            f"視認性は{detail_visuals.get('clarity', 'N/A')}。"
+                        )
+                        detail_tones = "、".join(detail_tone.get("primary_tone", []) or []) or "情報なし"
+                        st.write(
+                            f"**🎭 トーン**: {detail_tones}を基調とし、"
+                            f"訴求は{detail_tone.get('emotional_appeal', 'N/A')}型。"
+                            f"CTAの強さは{detail_tone.get('call_to_action', 'N/A')}。"
+                        )
+                        if detail_ai_labels:
+                            st.write(f"**🏷️ AIラベル**: {', '.join(detail_ai_labels)}")
+
                     if detail_improvements and detail_improvements.get("comments"):
                         st.markdown("### ✨ 改善ポイント")
                         for c in detail_improvements["comments"][:3]:
@@ -252,7 +281,19 @@ with tab3:
                     with st.expander("🔧 完全な分析結果（JSON・デバッグ用）", expanded=False):
                         st.json(detail)
                 else:
-                    st.error(f"❌ エラー: {response.status_code}\n{response.text}")
+                    try:
+                        detail_err_json = response.json()
+                    except Exception:
+                        detail_err_json = None
+
+                    if detail_err_json:
+                        st.error(f"❌ 詳細取得に失敗しました: {detail_err_json.get('error', 'Unknown error')}")
+                        st.write("**次のアクション**: Asset ID・バージョン指定を確認し、再度お試しください。")
+                    else:
+                        st.error(f"❌ 詳細取得に失敗しました（HTTP {response.status_code}）")
+
+                    with st.expander("🔧 エラー詳細（デバッグ用）", expanded=False):
+                        st.json(detail_err_json if detail_err_json else {"raw_response": response.text})
             except Exception as e:
                 st.error(f"❌ API 呼び出しエラー: {str(e)}")
         else:
