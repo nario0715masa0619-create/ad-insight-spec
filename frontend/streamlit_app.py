@@ -17,10 +17,36 @@ tab1, tab2, tab3, tab4 = st.tabs(["📤 Analyze", "📋 List", "🔍 Detail", "�
 # ============ TAB 1: Analyze ============
 with tab1:
     st.header("ファイル分析")
-    uploaded_file = st.file_uploader("画像またはビデオをアップロード", type=["png", "jpg", "jpeg", "mp4", "mov"])
     mode = st.selectbox("モード選択", ["file_only", "file_plus_lp", "file_plus_lp_plus_manual_kpi"])
-    
-    if st.button("🚀 分析実行"):
+
+    mode_requirements = {
+        "file_only": "必要な入力: 画像/動画ファイル",
+        "file_plus_lp": "必要な入力: 画像/動画ファイル + LPファイル（HTML）",
+        "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPIファイル（JSON）",
+    }
+    st.caption(f"ℹ️ {mode_requirements[mode]}")
+
+    uploaded_file = st.file_uploader("画像またはビデオをアップロード", type=["png", "jpg", "jpeg", "mp4", "mov"])
+
+    lp_file_upload = None
+    kpi_file_upload = None
+    if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi"):
+        lp_file_upload = st.file_uploader("LPファイルをアップロード（HTML）", type=["html", "htm"], key="lp_file_uploader")
+    if mode == "file_plus_lp_plus_manual_kpi":
+        kpi_file_upload = st.file_uploader("KPIファイルをアップロード（JSON）", type=["json"], key="kpi_file_uploader")
+
+    missing_items = []
+    if not uploaded_file:
+        missing_items.append("画像/動画ファイル")
+    if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi") and not lp_file_upload:
+        missing_items.append("LPファイル（HTML）")
+    if mode == "file_plus_lp_plus_manual_kpi" and not kpi_file_upload:
+        missing_items.append("KPIファイル（JSON）")
+
+    if missing_items:
+        st.warning(f"⚠️ 不足している入力: {'、'.join(missing_items)}。上記をアップロードすると分析を実行できます。")
+
+    if st.button("🚀 分析実行", disabled=bool(missing_items)):
         if uploaded_file:
             st.info("🔄 分析中...")
             
@@ -39,6 +65,10 @@ with tab1:
 
             try:
                 files = {"input_file": uploaded_file}
+                if lp_file_upload:
+                    files["lp_file"] = lp_file_upload
+                if kpi_file_upload:
+                    files["kpi_file"] = kpi_file_upload
                 data = {"mode": mode}
                 response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=60)
                 
