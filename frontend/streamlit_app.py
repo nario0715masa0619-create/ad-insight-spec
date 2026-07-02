@@ -124,7 +124,22 @@ with tab1:
                     )
                 else:
                     add_log(f"❌ エラー: {response.status_code}")
-                    st.error(f"❌ エラー: {response.status_code}\n{response.text}")
+                    try:
+                        err_json = response.json()
+                    except Exception:
+                        err_json = None
+
+                    if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
+                        st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
+                        st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
+                    elif err_json:
+                        st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
+                        st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")
+                    else:
+                        st.error(f"❌ 分析中にエラーが発生しました（HTTP {response.status_code}）")
+
+                    with st.expander("🔧 エラー詳細（デバッグ用）", expanded=False):
+                        st.json(err_json if err_json else {"raw_response": response.text})
             except Exception as e:
                 add_log(f"❌ エラー内容: {str(e)}")
                 st.error(f"❌ API 呼び出しエラー: {str(e)}")

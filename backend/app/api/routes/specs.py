@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import tempfile
 import shutil
+import re
 from pathlib import Path
 
 from app.db.session import get_db
@@ -164,12 +165,32 @@ async def analyze(
     
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
-        error_response, status_code = create_error_response(
-            error_message="Analysis failed",
-            error_code="ANALYSIS_ERROR",
-            status_code=500,
-            details={"exception": str(e)}
-        )
+        exc_str = str(e)
+        input_shortage_match = re.search(r"(\w+) is required in (\w+) mode", exc_str)
+        if input_shortage_match:
+            field_label_map = {
+                "landing_page": "LP情報（ランディングページ）",
+                "performance": "KPI情報（インプレッション数・クリック数などの実績データ）",
+            }
+            field_key = input_shortage_match.group(1)
+            mode_name = input_shortage_match.group(2)
+            field_label = field_label_map.get(field_key, field_key)
+            error_response, status_code = create_error_response(
+                error_message=(
+                    f"分析に必要な情報が不足しています。選択したモード「{mode_name}」では"
+                    f"{field_label}の入力が必須です。不足している情報を追加して再実行してください。"
+                ),
+                error_code="INSUFFICIENT_INPUT",
+                status_code=422,
+                details={"exception": exc_str}
+            )
+        else:
+            error_response, status_code = create_error_response(
+                error_message="Analysis failed",
+                error_code="ANALYSIS_ERROR",
+                status_code=500,
+                details={"exception": exc_str}
+            )
         raise HTTPException(status_code=status_code, detail=error_response)
 
 
