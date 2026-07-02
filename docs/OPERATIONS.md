@@ -179,10 +179,10 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 #### systemd 環境変数・状態確認コマンド
 ```bash
 # サービスのステータスと直近のログを確認
-sudo systemctl status fastapi.service
+sudo systemctl status ad-insight-fastapi.service
 
 # systemd サービスに渡されている環境変数を確認
-sudo systemctl show fastapi.service --property=Environment,EnvironmentFile
+sudo systemctl show ad-insight-fastapi.service --property=Environment,EnvironmentFile
 ```
 
 #### FastAPI プロセス環境確認コマンド
