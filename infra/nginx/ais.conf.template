@@ -1,0 +1,50 @@
+# Ad-Insight-Spec (AIS) 用 Nginx リバースプロキシテンプレート
+#
+# 前提: ドメイン取得・DNS Aレコード設定・GCP静的IP割り当てが完了していること。
+# 詳細は docs/DEPLOYMENT.md 「Nginx / ドメイン移行チェックリスト」を参照。
+#
+# 適用手順:
+#   1. {{DOMAIN_NAME}} を実際のドメイン名に置換する
+#   2. /etc/nginx/sites-available/ais に配置する
+#   3. sudo ln -s /etc/nginx/sites-available/ais /etc/nginx/sites-enabled/ais
+#   4. sudo nginx -t で構文検証してから reload する
+#   5. TLS化する場合は certbot --nginx -d {{DOMAIN_NAME}} を実行する
+#      （certbot がこのファイルに 443/ssl 設定を自動追記する）
+
+server {
+    listen 80;
+    server_name {{DOMAIN_NAME}};
+
+    client_max_body_size 50M;
+
+    # FastAPI ヘルスチェック
+    location = /health {
+        proxy_pass http://127.0.0.1:8000/health;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # FastAPI バックエンド（既存の /api/v1/specs/... パスをそのまま維持）
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Streamlit フロントエンド（WebSocket 通信のため Upgrade ヘッダが必須）
+    location / {
+        proxy_pass http://127.0.0.1:8501/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}
