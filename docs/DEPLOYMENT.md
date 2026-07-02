@@ -183,3 +183,33 @@ GCP コンソール > VPC ネットワーク > ファイアウォール > ファ
 **FastAPI (8000) の場合も同様：**
 - 名前: allow-fastapi-8000
 - プロトコルとポート: tcp:8000
+
+## Nginx / ドメイン移行チェックリスト（Phase 2-3）
+
+### 現状（2026-07-02 時点で確認済み）
+- 公開経路は IP 直アクセスのみ（`http://<VM外部IP>:8501`、FastAPI は `:8000`）。ドメイン・正規URLは存在しない
+- Nginx は本番VMに未インストール。80/443番ポートはファイアウォール上は開いているが、待受プロセスがない
+- GCPの静的（予約済み）IPアドレスは未作成 → **現在のVM外部IPはエフェメラル（VM停止/再起動で変わりうる）**
+- Cloud DNS ゾーンは未作成・未有効化
+- TLS証明書は未取得
+
+上記の理由により、**本番のNginx/ドメイン切替は未実施**。`infra/nginx/ais.conf.template` として設定テンプレートのみ用意し、前提が揃い次第すぐに適用できる状態にした。
+
+### 切替に必要な前提条件（すべて揃うまで本番切替しないこと）
+- [ ] ドメインを取得し、DNS管理者アクセスを確保する
+- [ ] GCPで静的外部IPを予約し、VMに割り当てる（`gcloud compute addresses create` → `gcloud compute instances delete-access-config` / `add-access-config` でVMに付け替え。**この操作はVMの外部IPが変わるため要注意、実施前に必ずSSH到達性を確認すること**）
+- [ ] DNSのAレコードを上記の静的IPへ向ける（反映まで数分〜数時間）
+
+### 切替手順（前提が揃った後）
+1. Nginxをインストール: `sudo apt-get update && sudo apt-get install -y nginx`
+2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を実際のドメイン名に置換し、`/etc/nginx/sites-available/ais` に配置
+3. `sudo ln -s /etc/nginx/sites-available/ais /etc/nginx/sites-enabled/ais`
+4. `sudo nginx -t` で構文検証（エラーがあれば有効化しない）
+5. `sudo systemctl reload nginx`（Nginx未起動なら `enable --now nginx`）
+6. ドメイン経由でHTTP到達確認（UI表示・`/health`・分析実行）を、**既存のIP直アクセスを止めずに**並行して行う
+7. TLS化: `sudo certbot --nginx -d <ドメイン名>`（Let's Encrypt、証明書自動更新はcertbotのsystemd timerに従う）
+8. ドメイン経由での動作を十分に確認できてから、IP直アクセス用ファイアウォールルール（`allow-streamlit-8501`, `allow-fastapi-8000`）の許可範囲を縮小することを検討する（本チェックリストでは実施しない。別タスクとする）
+
+### 注意
+- FastAPI/Streamlitのsystemd構成（`ad-insight-fastapi`, `ad-insight-streamlit`）は変更不要。Nginxはあくまで手前に追加するリバースプロキシであり、両サービスは引き続き `127.0.0.1:8000` / `127.0.0.1:8501` で待受する
+- StreamlitはWebSocket通信を使うため、Nginx設定に `Upgrade`/`Connection` ヘッダの転送が必須（`infra/nginx/ais.conf.template` に反映済み）
