@@ -1,0 +1,11 @@
+# Minimal sudo policy for Ad-Insight-Spec (AIS) 1-click ops scripts
+# (~/ais-scripts/ais_status.sh, ~/ais-scripts/ais_restart.sh).
+# Scope: status/restart of ad-insight-fastapi and ad-insight-streamlit only.
+#
+# NOTE: /etc/sudoers.d/google_sudoers grants %google-sudoers a broader
+# NOPASSWD:ALL and is managed by GCP IAM/OS Login (outside this project's
+# control). This file defines the minimal policy AIS itself requires,
+# independent of that broader grant.
+Cmnd_Alias AIS_OPS = /usr/bin/systemctl status ad-insight-fastapi --no-pager, /usr/bin/systemctl status ad-insight-streamlit --no-pager, /usr/bin/systemctl restart ad-insight-fastapi ad-insight-streamlit
+
+{{APP_USER}} ALL=(root) NOPASSWD: AIS_OPS

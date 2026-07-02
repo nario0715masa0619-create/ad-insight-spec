@@ -241,3 +241,21 @@ cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
 - どちらの bat も実行結果はウィンドウ内にそのまま表示され、最後にキー入力待ちになるため、閉じる前に内容を確認できる
 - secrets（APIキー等）は bat・VM側スクリプトいずれにも含まれていない
 - `AIS_Restart.bat` は対象2 service（`ad-insight-fastapi`, `ad-insight-streamlit`）以外には影響しない
+
+### 9.6 sudo権限の最小化ポリシー（Phase 2-1）
+
+AIS 1クリック運用（`ais_status.sh` / `ais_restart.sh`）が実際に必要とするsudo操作は、`ad-insight-fastapi` / `ad-insight-streamlit` の `status` / `restart` のみ。この最小権限を明示的に定義したポリシーを `infra/sudoers/ais-ops.template` としてリポジトリ管理している。
+
+**適用手順:**
+```bash
+sudo cp infra/sudoers/ais-ops.template /etc/sudoers.d/ais-ops
+sudo sed -i "s/{{APP_USER}}/<実際のOSユーザー名>/" /etc/sudoers.d/ais-ops
+sudo chown root:root /etc/sudoers.d/ais-ops
+sudo chmod 0440 /etc/sudoers.d/ais-ops
+sudo visudo -c   # 構文検証（必須）
+```
+
+**注意事項:**
+- 本番VMには GCP IAM/OS Login 由来の `%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL`（`/etc/sudoers.d/google_sudoers`）が別途存在する。これは本プロジェクトの管理外（IAMロールに基づきGoogle側で自動的に付与・同期される）であり、削除・変更は行っていない
+- 上記の`infra/sudoers/ais-ops.template`は、AIS運用スクリプトが実際に必要とする権限を独立して定義したものであり、将来的に広範なIAM権限が絞られた場合でもAIS運用が継続できるようにするための最小権限ポリシー
+- 新しいsudoersファイルを設置する際は、必ず`sudo visudo -c`で構文検証してから有効化すること（構文エラーのある`/etc/sudoers.d/`配下ファイルはsudo自体を機能不全にするリスクがある）
