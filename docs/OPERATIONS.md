@@ -223,7 +223,7 @@ cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
 | `AIS_Status.bat` | 両serviceの状態と `/health` を確認する | SSH経由で `/home/nario/ais-scripts/ais_status.sh` を実行し、`systemctl status ad-insight-fastapi` / `ad-insight-streamlit` と `curl http://127.0.0.1:8000/health` の結果を表示 |
 | `AIS_Restart.bat` | 両serviceを再起動し、直後の状態を確認する | SSH経由で `/home/nario/ais-scripts/ais_restart.sh` を実行し、`systemctl restart` 後に status と `/health` を表示 |
 
-補足: 本番環境には現状リバースプロキシ・独自ドメインが存在しないため、`http://34.84.24.83:8501` が正式なアクセスURLを兼ねています。なお `34.84.24.83` は2026-07-03にGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。ドメイン取得後のNginx/TLS移行手順は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
+補足: 本番環境には現状リバースプロキシ・独自ドメインが存在しないため、`http://34.84.24.83:8501` が正式なアクセスURLを兼ねています。なお `34.84.24.83` は2026-07-03にGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。採用ドメインは `campaignpilot.luvira.co.jp` に決定済みですが、DNS（Xserver管理）のAレコードが未設定のため未反映です。Nginx/TLS移行手順・DNS切替の再開手順は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
 
 ### 9.3 利用手順（平常時）
 1. `AIS_Open.bat` をダブルクリックする

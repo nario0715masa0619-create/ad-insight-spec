@@ -186,31 +186,36 @@ GCP コンソール > VPC ネットワーク > ファイアウォール > ファ
 
 ## Nginx / ドメイン移行チェックリスト（Phase 2-3）
 
-### 現状（2026-07-03 時点で確認済み）
-- 公開経路は IP 直アクセスのみ（`http://34.84.24.83:8501`、FastAPI は `:8000`）。ドメイン・正規URLは存在しない
+### 現状（2026-07-03 時点で確認済み、採用ドメイン決定後）
+- 採用ドメインは **`campaignpilot.luvira.co.jp`** に決定
+- 公開経路は現状 IP 直アクセスのみ（`http://34.84.24.83:8501`、FastAPI は `:8000`）
 - Nginx は本番VMに未インストール。80/443番ポートはファイアウォール上は開いているが、待受プロセスがない
-- **GCPの静的外部IPアドレスは予約済み（2026-07-03）**: `ais-prod-static-ip`（region: `asia-northeast1`）として `34.84.24.83` を予約。既存のエフェメラルIPをそのまま静的化したため **IPアドレスの変更・ダウンタイムなし**。以後、VM停止/再起動でもこのIPは変わらない
-- Cloud DNS ゾーンは未作成・未有効化
+- GCPの静的外部IPアドレスは予約済み: `ais-prod-static-ip`（region: `asia-northeast1`）= `34.84.24.83`
 - TLS証明書は未取得
-- **ドメインは未所有**。プロジェクト `ad-insight-spec` および関連する全GCPプロジェクトを確認したが Cloud Domains 登録済みドメインは無く、既存の利用可能なドメイン・サブドメインも見つからなかった
 
-上記の理由により、**本番のNginx/ドメイン切替は未実施**。`infra/nginx/ais.conf.template` として設定テンプレートのみ用意し、前提が揃い次第すぐに適用できる状態にした。
+**ブロッカー（2026-07-03 調査で判明、未解消）:**
+- `luvira.co.jp` の権威DNSは GCP Cloud DNS ではなく **Xserver**（`ns1〜ns5.xserver.jp`）が管理している。この実行環境（gcloud CLI / GitHub操作用の認証情報）では Xserver 側のDNS管理画面・APIへのアクセス手段が無く、Aレコードを変更できない
+- `campaignpilot.luvira.co.jp` は現時点で既に `85.131.213.56`（Xserverの共有ホスティングIPと推測。AISのVM・静的IPとは無関係）を指しており、HTTP/HTTPS双方で応答が返る状態（Xserver側の「無効なURLです」という汎用エラーページ。AIS用に設定されたものではなく、`luvira.co.jp` 配下の未設定サブドメイン向けデフォルト応答と見られる）
+- 上記のため、DNS Aレコードの向け先変更には **Xserverのサーバーパネル／ドメインパネルでの操作、またはXserver側DNS管理者によるAレコード追加**が必要（本環境からは実行不可）
+
+上記の理由により、**本番のNginx/ドメイン切替は未実施**。`infra/nginx/ais.conf.template` として設定テンプレートのみ用意し、DNS切替が完了次第すぐに適用できる状態にした。
 
 ### 切替に必要な前提条件（すべて揃うまで本番切替しないこと）
-- [x] GCPで静的外部IPを予約する（完了: `ais-prod-static-ip` / `34.84.24.83` / `asia-northeast1`。既存VMのアクセス設定は変更不要、既に同IPで割り当て済み）
-- [ ] **ドメインを取得し、DNS管理者アクセスを確保する（未着手・要ユーザー判断）**: ドメイン新規購入は課金・所有権取得を伴う不可逆操作のため自律実行の対象外とした。AIS用サブドメイン（例: `ais.<既存または新規ドメイン>`）の利用を優先すること
-- [ ] DNSのAレコードを `34.84.24.83`（静的IP、予約済み）へ向ける（反映まで数分〜数時間）
+- [x] GCPで静的外部IPを予約する（完了: `ais-prod-static-ip` / `34.84.24.83` / `asia-northeast1`）
+- [x] 採用ドメイン決定（完了: `campaignpilot.luvira.co.jp`）
+- [ ] **Xserverの `luvira.co.jp` DNS管理画面（またはドメインのネームサーバーパネル）から `campaignpilot` のAレコードを `34.84.24.83` に向ける（未実施・要Xserver管理者作業）**
+- [ ] DNS反映確認（`nslookup campaignpilot.luvira.co.jp` が `34.84.24.83` を返すこと。Xserverの旧レコードのTTL＝3600秒のため反映まで最大1時間程度を見込む）
 
-### 切替手順（ドメイン取得後、すぐ再開できる状態）
-0. ドメイン（またはAIS用サブドメイン）のDNS Aレコードを `34.84.24.83`（予約済み静的IP `ais-prod-static-ip`）へ向ける
+### 切替手順（DNS切替後、すぐ再開できる状態）
+0. Xserverの `luvira.co.jp` DNS設定で `campaignpilot` のAレコードを `34.84.24.83` に向け、`nslookup campaignpilot.luvira.co.jp 8.8.8.8` で `34.84.24.83` を返すことを確認する
 1. Nginxをインストール: `sudo apt-get update && sudo apt-get install -y nginx`
-2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を実際のドメイン名に置換し、`/etc/nginx/sites-available/ais` に配置
+2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を `campaignpilot.luvira.co.jp` に置換し、`/etc/nginx/sites-available/ais` に配置
 3. `sudo ln -s /etc/nginx/sites-available/ais /etc/nginx/sites-enabled/ais`
 4. `sudo nginx -t` で構文検証（エラーがあれば有効化しない）
 5. `sudo systemctl reload nginx`（Nginx未起動なら `enable --now nginx`）
 6. ドメイン経由でHTTP到達確認（UI表示・`/health`・分析実行）を、**既存のIP直アクセスを止めずに**並行して行う
-7. TLS化: `sudo certbot --nginx -d <ドメイン名>`（Let's Encrypt、証明書自動更新はcertbotのsystemd timerに従う）
-8. ドメイン経由での動作を十分に確認できてから、IP直アクセス用ファイアウォールルール（`allow-streamlit-8501`, `allow-fastapi-8000`）の許可範囲を縮小することを検討する（本チェックリストでは実施しない。別タスクとする）
+7. TLS化: `sudo certbot --nginx -d campaignpilot.luvira.co.jp`（Let's Encrypt、証明書自動更新はcertbotのsystemd timerに従う）
+8. `https://campaignpilot.luvira.co.jp` での動作（`/health`、Streamlit UI、WebSocket通信）を十分に確認できてから、IP直アクセス用ファイアウォールルール（`allow-streamlit-8501`, `allow-fastapi-8000`）の許可範囲を縮小することを検討する（本チェックリストでは実施しない。別タスクとする）
 
 ### 注意
 - FastAPI/Streamlitのsystemd構成（`ad-insight-fastapi`, `ad-insight-streamlit`）は変更不要。Nginxはあくまで手前に追加するリバースプロキシであり、両サービスは引き続き `127.0.0.1:8000` / `127.0.0.1:8501` で待受する
