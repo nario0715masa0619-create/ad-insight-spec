@@ -184,6 +184,16 @@ GCP コンソール > VPC ネットワーク > ファイアウォール > ファ
 - 名前: allow-fastapi-8000
 - プロトコルとポート: tcp:8000
 
+### firewall 棚卸しメモ（2026-07-03）
+
+Secrets/公開経路の棚卸しの一環として、`default-allow-rdp`（tcp:3389, 0.0.0.0/0）を削除した。
+
+- **削除理由**: 本番VMはDebian Linuxで、3389番ポートの待受プロセスは存在しなかった（RDPは未使用）。GCPプロジェクト作成時のデフォルトルールが消し忘れられていたもので、実際のサービスに紐づかない不要な公開経路だった
+- **削除前確認**: `sudo ss -tlnp` で3389番の待受なしを確認
+- **削除後確認**: `https://campaignpilot.luvira.co.jp/health`（200）、`http://34.84.24.83:8501`（200）、SSH到達性、`ad-insight-fastapi` / `ad-insight-streamlit` / `nginx` の稼働（active）、FastAPI `/health`（healthy）をすべて確認し、影響がないことを確認済み
+- **現在のfirewallルール**: `default-allow-http`(80) / `default-allow-https`(443) / `allow-streamlit-8501`(8501) / `default-allow-ssh`(22) / `default-allow-icmp` / `default-allow-internal`（VPC内部のみ）
+- **今後の検討事項（未実施）**: `allow-streamlit-8501` はHTTPS本番経路（Nginx）と並行して残っている直アクセス用ルール。閉鎖判断はHTTPS運用の安定確認後に別途行う（[docs/OPERATIONS.md](OPERATIONS.md) 参照）
+
 ## Nginx / ドメイン移行チェックリスト（Phase 2-3）
 
 ### 現状（2026-07-03 時点、本番反映済み）
