@@ -186,21 +186,23 @@ GCP コンソール > VPC ネットワーク > ファイアウォール > ファ
 
 ## Nginx / ドメイン移行チェックリスト（Phase 2-3）
 
-### 現状（2026-07-02 時点で確認済み）
-- 公開経路は IP 直アクセスのみ（`http://<VM外部IP>:8501`、FastAPI は `:8000`）。ドメイン・正規URLは存在しない
+### 現状（2026-07-03 時点で確認済み）
+- 公開経路は IP 直アクセスのみ（`http://34.84.24.83:8501`、FastAPI は `:8000`）。ドメイン・正規URLは存在しない
 - Nginx は本番VMに未インストール。80/443番ポートはファイアウォール上は開いているが、待受プロセスがない
-- GCPの静的（予約済み）IPアドレスは未作成 → **現在のVM外部IPはエフェメラル（VM停止/再起動で変わりうる）**
+- **GCPの静的外部IPアドレスは予約済み（2026-07-03）**: `ais-prod-static-ip`（region: `asia-northeast1`）として `34.84.24.83` を予約。既存のエフェメラルIPをそのまま静的化したため **IPアドレスの変更・ダウンタイムなし**。以後、VM停止/再起動でもこのIPは変わらない
 - Cloud DNS ゾーンは未作成・未有効化
 - TLS証明書は未取得
+- **ドメインは未所有**。プロジェクト `ad-insight-spec` および関連する全GCPプロジェクトを確認したが Cloud Domains 登録済みドメインは無く、既存の利用可能なドメイン・サブドメインも見つからなかった
 
 上記の理由により、**本番のNginx/ドメイン切替は未実施**。`infra/nginx/ais.conf.template` として設定テンプレートのみ用意し、前提が揃い次第すぐに適用できる状態にした。
 
 ### 切替に必要な前提条件（すべて揃うまで本番切替しないこと）
-- [ ] ドメインを取得し、DNS管理者アクセスを確保する
-- [ ] GCPで静的外部IPを予約し、VMに割り当てる（`gcloud compute addresses create` → `gcloud compute instances delete-access-config` / `add-access-config` でVMに付け替え。**この操作はVMの外部IPが変わるため要注意、実施前に必ずSSH到達性を確認すること**）
-- [ ] DNSのAレコードを上記の静的IPへ向ける（反映まで数分〜数時間）
+- [x] GCPで静的外部IPを予約する（完了: `ais-prod-static-ip` / `34.84.24.83` / `asia-northeast1`。既存VMのアクセス設定は変更不要、既に同IPで割り当て済み）
+- [ ] **ドメインを取得し、DNS管理者アクセスを確保する（未着手・要ユーザー判断）**: ドメイン新規購入は課金・所有権取得を伴う不可逆操作のため自律実行の対象外とした。AIS用サブドメイン（例: `ais.<既存または新規ドメイン>`）の利用を優先すること
+- [ ] DNSのAレコードを `34.84.24.83`（静的IP、予約済み）へ向ける（反映まで数分〜数時間）
 
-### 切替手順（前提が揃った後）
+### 切替手順（ドメイン取得後、すぐ再開できる状態）
+0. ドメイン（またはAIS用サブドメイン）のDNS Aレコードを `34.84.24.83`（予約済み静的IP `ais-prod-static-ip`）へ向ける
 1. Nginxをインストール: `sudo apt-get update && sudo apt-get install -y nginx`
 2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を実際のドメイン名に置換し、`/etc/nginx/sites-available/ais` に配置
 3. `sudo ln -s /etc/nginx/sites-available/ais /etc/nginx/sites-enabled/ais`
