@@ -219,11 +219,11 @@ cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
 
 | ファイル | 役割 | 内部処理 |
 |---|---|---|
-| `AIS_Open.bat` | 本番UI（Streamlit）をブラウザで開く | `start "" "http://34.84.24.83:8501"` |
+| `AIS_Open.bat` | 本番UI（Streamlit）をブラウザで開く | `start "" "https://campaignpilot.luvira.co.jp"` |
 | `AIS_Status.bat` | 両serviceの状態と `/health` を確認する | SSH経由で `/home/nario/ais-scripts/ais_status.sh` を実行し、`systemctl status ad-insight-fastapi` / `ad-insight-streamlit` と `curl http://127.0.0.1:8000/health` の結果を表示 |
 | `AIS_Restart.bat` | 両serviceを再起動し、直後の状態を確認する | SSH経由で `/home/nario/ais-scripts/ais_restart.sh` を実行し、`systemctl restart` 後に status と `/health` を表示 |
 
-補足: 本番の正式アクセスURLは **`https://campaignpilot.luvira.co.jp`**（2026-07-03、Nginx + Let's Encrypt TLSで本番反映済み）。`http://34.84.24.83:8501` 等の直アクセス経路は縮小方針が決まるまで引き続き到達可能（`AIS_Open.bat` は現状どおり直アクセスURLを開く設計のまま）。なお `34.84.24.83` はGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。Nginx/TLSの適用済み設定・今後の直アクセス縮小検討は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
+補足: 本番の正式アクセスURLは **`https://campaignpilot.luvira.co.jp`**（2026-07-03、Nginx + Let's Encrypt TLSで本番反映済み）。`AIS_Open.bat` も正式URLを開く設定に更新済み（2026-07-03）。`http://34.84.24.83:8501` 等の直アクセス経路は縮小方針が決まるまで引き続き到達可能。なお `34.84.24.83` はGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。Nginx/TLSの適用済み設定・今後の直アクセス縮小検討は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
 
 ### 9.3 利用手順（平常時）
 1. `AIS_Open.bat` をダブルクリックする
