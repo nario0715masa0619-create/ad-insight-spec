@@ -186,36 +186,35 @@ GCP コンソール > VPC ネットワーク > ファイアウォール > ファ
 
 ## Nginx / ドメイン移行チェックリスト（Phase 2-3）
 
-### 現状（2026-07-03 時点で確認済み、採用ドメイン決定後）
-- 採用ドメインは **`campaignpilot.luvira.co.jp`** に決定
-- 公開経路は現状 IP 直アクセスのみ（`http://34.84.24.83:8501`、FastAPI は `:8000`）
-- Nginx は本番VMに未インストール。80/443番ポートはファイアウォール上は開いているが、待受プロセスがない
-- GCPの静的外部IPアドレスは予約済み: `ais-prod-static-ip`（region: `asia-northeast1`）= `34.84.24.83`
-- TLS証明書は未取得
+### 現状（2026-07-03 時点、本番反映済み）
+- **`https://campaignpilot.luvira.co.jp` が本番公開URL。DNS / Nginx / TLS 切替が完了した**
+- GCPの静的外部IPアドレス: `ais-prod-static-ip`（region: `asia-northeast1`）= `34.84.24.83`
+- DNS: Xserver管理の `luvira.co.jp` ゾーンで `campaignpilot` のAレコードが `34.84.24.83` に設定済み・反映確認済み
+- Nginx: 本番VMに導入済み（`apt-get install nginx`）、`/etc/nginx/sites-available/ais`（`infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を `campaignpilot.luvira.co.jp` に置換して生成）を `sites-enabled` に配置。デフォルトサイト（`sites-enabled/default`）は無効化済み
+- TLS: `certbot --nginx -d campaignpilot.luvira.co.jp` で取得済み（Let's Encrypt、2026-10-01 失効予定、`certbot.timer` により自動更新）。HTTP→HTTPSリダイレクト（301）も certbot により自動設定済み
+- 直アクセス経路（`http://34.84.24.83:8501` 等）は撤去しておらず、引き続き到達可能（縮小は本チェックリストの対象外・別タスク）
 
-**ブロッカー（2026-07-03 調査で判明、未解消）:**
-- `luvira.co.jp` の権威DNSは GCP Cloud DNS ではなく **Xserver**（`ns1〜ns5.xserver.jp`）が管理している。この実行環境（gcloud CLI / GitHub操作用の認証情報）では Xserver 側のDNS管理画面・APIへのアクセス手段が無く、Aレコードを変更できない
-- `campaignpilot.luvira.co.jp` は現時点で既に `85.131.213.56`（Xserverの共有ホスティングIPと推測。AISのVM・静的IPとは無関係）を指しており、HTTP/HTTPS双方で応答が返る状態（Xserver側の「無効なURLです」という汎用エラーページ。AIS用に設定されたものではなく、`luvira.co.jp` 配下の未設定サブドメイン向けデフォルト応答と見られる）
-- 上記のため、DNS Aレコードの向け先変更には **Xserverのサーバーパネル／ドメインパネルでの操作、またはXserver側DNS管理者によるAレコード追加**が必要（本環境からは実行不可）
+### 完了した前提条件
+- [x] GCPで静的外部IPを予約する（`ais-prod-static-ip` / `34.84.24.83` / `asia-northeast1`）
+- [x] 採用ドメイン決定（`campaignpilot.luvira.co.jp`）
+- [x] Xserverの `luvira.co.jp` DNS管理画面で `campaignpilot` のAレコードを `34.84.24.83` に設定（DNS管理者側で実施済み）
+- [x] DNS反映確認（`nslookup campaignpilot.luvira.co.jp 8.8.8.8` → `34.84.24.83`）
+- [x] Nginx導入・設定適用・構文検証・reload
+- [x] HTTP(80)疎通確認、TLS証明書取得、HTTPS(443)疎通確認
+- [x] `/health`・Streamlit UI・WebSocket（`Upgrade`/`Connection`ヘッダ経由の101応答）の疎通確認
 
-上記の理由により、**本番のNginx/ドメイン切替は未実施**。`infra/nginx/ais.conf.template` として設定テンプレートのみ用意し、DNS切替が完了次第すぐに適用できる状態にした。
+### 適用済み手順（記録）
+0. `nslookup campaignpilot.luvira.co.jp 8.8.8.8` で `34.84.24.83` を確認
+1. `sudo apt-get install -y nginx certbot python3-certbot-nginx`
+2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を `campaignpilot.luvira.co.jp` に置換し `/etc/nginx/sites-available/ais` に配置、`sites-enabled/ais` へのシンボリックリンクを作成、デフォルトサイトを無効化
+3. `sudo nginx -t` → 構文OK
+4. `sudo systemctl reload nginx`
+5. `http://campaignpilot.luvira.co.jp/`・`/health` の200応答、既存IP直アクセスの継続稼働を確認
+6. `sudo certbot --nginx -d campaignpilot.luvira.co.jp --agree-tos -m <管理者メール> --redirect` でTLS取得・HTTP→HTTPSリダイレクトを自動設定
+7. `https://campaignpilot.luvira.co.jp/`・`/health`・WebSocketアップグレード（101）・Streamlit UIのHTML配信を確認
 
-### 切替に必要な前提条件（すべて揃うまで本番切替しないこと）
-- [x] GCPで静的外部IPを予約する（完了: `ais-prod-static-ip` / `34.84.24.83` / `asia-northeast1`）
-- [x] 採用ドメイン決定（完了: `campaignpilot.luvira.co.jp`）
-- [ ] **Xserverの `luvira.co.jp` DNS管理画面（またはドメインのネームサーバーパネル）から `campaignpilot` のAレコードを `34.84.24.83` に向ける（未実施・要Xserver管理者作業）**
-- [ ] DNS反映確認（`nslookup campaignpilot.luvira.co.jp` が `34.84.24.83` を返すこと。Xserverの旧レコードのTTL＝3600秒のため反映まで最大1時間程度を見込む）
-
-### 切替手順（DNS切替後、すぐ再開できる状態）
-0. Xserverの `luvira.co.jp` DNS設定で `campaignpilot` のAレコードを `34.84.24.83` に向け、`nslookup campaignpilot.luvira.co.jp 8.8.8.8` で `34.84.24.83` を返すことを確認する
-1. Nginxをインストール: `sudo apt-get update && sudo apt-get install -y nginx`
-2. `infra/nginx/ais.conf.template` の `{{DOMAIN_NAME}}` を `campaignpilot.luvira.co.jp` に置換し、`/etc/nginx/sites-available/ais` に配置
-3. `sudo ln -s /etc/nginx/sites-available/ais /etc/nginx/sites-enabled/ais`
-4. `sudo nginx -t` で構文検証（エラーがあれば有効化しない）
-5. `sudo systemctl reload nginx`（Nginx未起動なら `enable --now nginx`）
-6. ドメイン経由でHTTP到達確認（UI表示・`/health`・分析実行）を、**既存のIP直アクセスを止めずに**並行して行う
-7. TLS化: `sudo certbot --nginx -d campaignpilot.luvira.co.jp`（Let's Encrypt、証明書自動更新はcertbotのsystemd timerに従う）
-8. `https://campaignpilot.luvira.co.jp` での動作（`/health`、Streamlit UI、WebSocket通信）を十分に確認できてから、IP直アクセス用ファイアウォールルール（`allow-streamlit-8501`, `allow-fastapi-8000`）の許可範囲を縮小することを検討する（本チェックリストでは実施しない。別タスクとする）
+### 今後の検討事項（本チェックリストでは未実施・別タスク）
+- `https://campaignpilot.luvira.co.jp` での運用が十分安定してから、IP直アクセス用ファイアウォールルール（`allow-streamlit-8501`, `allow-fastapi-8000`）の許可範囲縮小を検討する
 
 ### 注意
 - FastAPI/Streamlitのsystemd構成（`ad-insight-fastapi`, `ad-insight-streamlit`）は変更不要。Nginxはあくまで手前に追加するリバースプロキシであり、両サービスは引き続き `127.0.0.1:8000` / `127.0.0.1:8501` で待受する
