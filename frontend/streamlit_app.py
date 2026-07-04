@@ -124,6 +124,10 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         key=widget_key(tab_key, "download_result", asset_id),
     )
 
+    # st.rerun() はここでは呼ばない（expander/コンテナの内側から呼ぶと、直前まで
+    # 描画されていた要素が残留することがあるため）。削除成功の判定だけ行い、
+    # expander を抜けた後にまとめて rerun する。
+    delete_succeeded = False
     with st.expander("⚠️ 削除", expanded=False, key=widget_key(tab_key, "expander_delete", asset_id)):
         confirm = st.checkbox(
             "この Asset を削除してもよろしいですか？（論理削除）",
@@ -134,13 +138,16 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
                 response = requests.delete(f"{API_BASE_URL}/{asset_id}")
                 if response.status_code == 200:
                     st.success("✅ 削除完了（論理削除）")
-                    if on_delete_success:
-                        on_delete_success()
-                    st.rerun()
+                    delete_succeeded = True
                 else:
                     st.error(f"❌ エラー: {response.status_code}\n{response.text}")
             except Exception as e:
                 st.error(f"❌ API 呼び出しエラー: {str(e)}")
+
+    if delete_succeeded:
+        if on_delete_success:
+            on_delete_success()
+        st.rerun()
 
 
 # ページ設定
@@ -366,6 +373,13 @@ with tab_saved:
 
         # 一覧APIはデフォルトで asset_id ごとの最新版のみを返すが、念のため
         # ループ index は残しておく（unknown フォールバック等での widget key 衝突防止）。
+        #
+        # 注意: st.rerun() はループ/コンテナの内側から即座に呼ばない。ループ途中で
+        # 画面がすでに部分的にフロントエンドへ送信された状態で rerun すると、
+        # 直前まで描画されていた要素が新しい画面側に残留することがある
+        # (実機検証で再現・特定済み)。クリックの意図はいったん変数で受け取り、
+        # ループ完了・コンテナを抜けた後にまとめて反映する。
+        navigate_to_asset_id = None
         for idx, item in enumerate(st.session_state.get("list_items", [])):
             item_asset_id = item.get("asset_meta", {}).get("asset_id", "unknown")
             item_format = item.get("creative_core", {}).get("format", "N/A")
@@ -375,7 +389,7 @@ with tab_saved:
             item_comments = item_improvements.get("comments") if item_improvements else None
             item_first_comment = item_comments[0] if item_comments else None
 
-            with st.container(border=True, key=widget_key("saved_list", "item_container", item_asset_id, idx)):
+            with st.container(border=True):
                 st.write(f"**🆔 {item_asset_id}**（`{item_format}`）")
                 if item_summary:
                     st.write(f"📝 {item_summary}")
@@ -387,10 +401,7 @@ with tab_saved:
                         f"次アクション: {item_first_comment.get('recommended_action', 'N/A')}"
                     )
                 if st.button("🔍 詳細を見る", key=widget_key("saved_list", "select_detail", item_asset_id, idx)):
-                    st.session_state["current_view"] = "detail"
-                    st.session_state["selected_asset_id"] = item_asset_id
-                    st.session_state["selected_version"] = None
-                    st.rerun()
+                    navigate_to_asset_id = item_asset_id
                 with st.expander(
                     "🔧 JSON（デバッグ用）",
                     expanded=False,
@@ -398,6 +409,12 @@ with tab_saved:
                 ):
                     st.json(item)
                 st.divider()
+
+        if navigate_to_asset_id is not None:
+            st.session_state["current_view"] = "detail"
+            st.session_state["selected_asset_id"] = navigate_to_asset_id
+            st.session_state["selected_version"] = None
+            st.rerun()
 
 # ============ フッター ============
 st.divider()
