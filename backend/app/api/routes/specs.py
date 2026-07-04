@@ -200,17 +200,24 @@ async def list_specs(
     limit: int = Query(10, ge=1, le=100, description="取得件数上限"),
     asset_id: Optional[str] = Query(None, description="asset_id フィルタ"),
     format: Optional[str] = Query(None, description="format フィルタ"),
+    include_all_versions: bool = Query(
+        False, description="true の場合、asset_id ごとの全バージョンを含めて返す（デフォルトは最新版のみ）"
+    ),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
     分析結果一覧取得（フィルタリング・ページング対応）
-    
+
+    デフォルトでは asset_id ごとの最新バージョンのみを返す（主フローの「保存済み結果」向け）。
+    履歴が必要な場合は `include_all_versions=true` を指定する。
+
     **クエリパラメータ**:
     - `skip`: スキップ件数（ページング）
     - `limit`: 取得件数上限（1～100）
     - `asset_id`: asset_id でフィルタ
     - `format`: format でフィルタ
-    
+    - `include_all_versions`: true で全バージョンを含める（デフォルト: false、最新版のみ）
+
     **出力**:
     - `items`: レコード一覧
     - `total`: 全体件数
@@ -220,24 +227,31 @@ async def list_specs(
     try:
         logger.info(
             "Fetching specs list",
-            extra={"skip": skip, "limit": limit, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
+            extra={
+                "skip": skip,
+                "limit": limit,
+                "include_all_versions": include_all_versions,
+                "request_id": request_id_var.get(),
+                "trace_id": trace_id_var.get(),
+            }
         )
-        
+
         repo = AdInsightRepository(db)
-        records, total_count = repo.list_active(
+        list_fn = repo.list_active if include_all_versions else repo.list_latest_per_asset
+        records, total_count = list_fn(
             skip=skip,
             limit=limit,
             format_filter=format,
             asset_id_filter=asset_id
         )
-        
+
         return {
             "items": [rec.spec_data for rec in records],
             "total": total_count,
             "skip": skip,
             "limit": limit
         }
-    
+
     except Exception as e:
         logger.error(f"List error: {str(e)}")
         error_response, status_code = create_error_response(
