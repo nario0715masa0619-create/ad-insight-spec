@@ -262,6 +262,10 @@ with tab_new:
                     add_log("✅ 分析完了")
                     result = response.json()
                     st.session_state["analysis_result"] = result
+                    # 「保存済み結果」タブへ移動した場合でも、直近に分析したこの
+                    # asset/version が selected として引き継がれるようにする。
+                    st.session_state["selected_asset_id"] = result.get("asset_meta", {}).get("asset_id")
+                    st.session_state["selected_version"] = result.get("version")
                 else:
                     add_log(f"❌ エラー: {response.status_code}")
                     try:
@@ -403,9 +407,11 @@ with tab_saved:
         # (実機検証で再現・特定済み)。クリックの意図はいったん変数で受け取り、
         # ループ完了・コンテナを抜けた後にまとめて反映する。
         navigate_to_asset_id = None
+        navigate_to_version = None
         for idx, item in enumerate(st.session_state.get("list_items", [])):
             item_asset_id = item.get("asset_meta", {}).get("asset_id", "unknown")
             item_format = item.get("creative_core", {}).get("format", "N/A")
+            item_version = item.get("version")
             item_diag = item.get("diagnostics", {}) or {}
             item_improvements = item_diag.get("improvements")
             item_summary = item_improvements.get("summary") if item_improvements else None
@@ -425,6 +431,7 @@ with tab_saved:
                     )
                 if st.button("🔍 詳細を見る", key=widget_key("saved_list", "select_detail", item_asset_id, idx)):
                     navigate_to_asset_id = item_asset_id
+                    navigate_to_version = item_version
                 with st.expander(
                     "🔧 JSON（デバッグ用）",
                     expanded=False,
@@ -436,7 +443,9 @@ with tab_saved:
         if navigate_to_asset_id is not None:
             st.session_state["current_view"] = "detail"
             st.session_state["selected_asset_id"] = navigate_to_asset_id
-            st.session_state["selected_version"] = None
+            # 一覧カードの版（最新版）をそのまま詳細画面に引き継ぎ、
+            # 「一覧は最新版、詳細はv1」という表示不整合を防ぐ。
+            st.session_state["selected_version"] = navigate_to_version
             st.rerun()
 
 # ============ フッター ============

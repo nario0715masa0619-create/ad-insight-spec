@@ -147,8 +147,10 @@ async def analyze(
                     "trace_id": trace_id_var.get()
                 }
             )
-            
-            return spec_data_jsonable
+
+            # UI 側で「この場で作成した版」を selected_version として保持できるよう、
+            # DB 確定後の version をレスポンスに追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
+            return {**spec_data_jsonable, "version": db_record.version}
         
         finally:
             # 一時ファイル削除
@@ -245,8 +247,10 @@ async def list_specs(
             asset_id_filter=asset_id
         )
 
+        # UI 側が一覧カードの版を詳細遷移にそのまま引き継げるよう、
+        # 各 item に version を追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
         return {
-            "items": [rec.spec_data for rec in records],
+            "items": [{**rec.spec_data, "version": rec.version} for rec in records],
             "total": total_count,
             "skip": skip,
             "limit": limit
