@@ -37,6 +37,10 @@ def init_session_state():
         "selected_version": None,
         "list_items": [],
         "analysis_result": None,
+        # 詳細画面の Version widget (key="detail_version_input") が
+        # 現在どの asset_id 向けに初期化済みかを覚えておくための追跡用。
+        # widget 本体の値ではないので、rerun のたびに触らないこと。
+        "detail_version_input_for_asset": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -334,14 +338,24 @@ with tab_saved:
             st.session_state["current_view"] = "list"
             st.session_state["selected_asset_id"] = None
             st.session_state["selected_version"] = None
+            st.session_state["detail_version_input_for_asset"] = None
             st.rerun()
+
+        # widget の値は key="detail_version_input" が唯一の正とし、value= は渡さない
+        # （value= と session_state の二重管理は Streamlit で警告・表示ズレの原因になりうる）。
+        # selected_version はあくまで「遷移時の初期値ヒント」であり、
+        # 表示中の asset_id が切り替わったタイミングだけ widget state に流し込む。
+        # 同じ asset_id を見ている間にユーザーが手で変更した値は、次の rerun でも
+        # 上書きされずそのまま尊重される。
+        if st.session_state.get("detail_version_input_for_asset") != asset_id:
+            st.session_state["detail_version_input"] = st.session_state.get("selected_version") or 1
+            st.session_state["detail_version_input_for_asset"] = asset_id
 
         version = st.number_input(
             "Version（未指定/1のままなら選択時点の最新版を取得）",
             min_value=1,
-            value=st.session_state.get("selected_version") or 1,
             step=1,
-            key=widget_key("saved_detail", "version", asset_id),
+            key="detail_version_input",
         )
 
         try:
@@ -354,6 +368,7 @@ with tab_saved:
                     st.session_state["current_view"] = "list"
                     st.session_state["selected_asset_id"] = None
                     st.session_state["selected_version"] = None
+                    st.session_state["detail_version_input_for_asset"] = None
                     # 削除直後の一覧に削除済みカードが残らないよう、最新状態を取得し直す
                     refresh_saved_list()
 
