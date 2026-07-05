@@ -246,7 +246,7 @@ class AnalysisOrchestrator:
                 creative_analysis=cc_dict,
                 model=llm_model
             )
-            
+
             from app.schemas.llm_response import LLMImprovementValidationError
             if isinstance(improvements_result, LLMImprovementValidationError):
                 improvements_data = None
@@ -254,7 +254,22 @@ class AnalysisOrchestrator:
             else:
                 improvements_data = _dump_model(improvements_result)
                 improvements_error = None
-            
+
+            # 意思決定支援ブロック（強み・弱み・改善提案）生成の追加呼び出し。
+            # improvements とは独立した呼び出しであり、失敗しても他の結果には影響しない（fail-soft）。
+            decision_support_result = LLMService.generate_decision_support(
+                creative_analysis=cc_dict,
+                model=llm_model
+            )
+
+            from app.schemas.llm_response import LLMDecisionSupportValidationError
+            if isinstance(decision_support_result, LLMDecisionSupportValidationError):
+                decision_support_data = None
+                decision_support_error = _dump_model(decision_support_result)
+            else:
+                decision_support_data = _dump_model(decision_support_result)
+                decision_support_error = None
+
             self.llm_result = {
                 "creative_core": {
                     "visuals": cc_dict.get("visuals", {}),
@@ -267,7 +282,9 @@ class AnalysisOrchestrator:
                     "llm_error": llm_result.error_details
                 },
                 "improvements": improvements_data,
-                "improvements_error": improvements_error
+                "improvements_error": improvements_error,
+                "decision_support": decision_support_data,
+                "decision_support_error": decision_support_error
             }
             logger.info("LLM analysis complete")
         except Exception as e:

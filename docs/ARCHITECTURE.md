@@ -82,7 +82,8 @@ Tesseract-OCR を使用し、画像または動画フレームからテキスト
 - fail-soft: バリデーション失敗時も構造化エラーで安全に応答
 
 **LLM統合層（llm_service.py）**
-- `analyze_creative_improvements` メソッド：改善コメント生成専用
+- `analyze_creative_improvements` メソッド：改善コメント生成専用（`diagnostics.improvements`）
+- `generate_decision_support` メソッド：強み・弱み・改善提案の意思決定支援ブロック生成専用（`diagnostics.decision_support`、improvementsとは独立したfail-soft呼び出し）
 - 3回再試行ロジック：API エラー時に自動リトライ
 - timeout 60秒、rate-limit 対応
 

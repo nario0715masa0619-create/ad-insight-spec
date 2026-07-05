@@ -1,6 +1,16 @@
 import re
 from typing import Union, List, Dict, Any
-from app.schemas.llm_response import ImprovementCommentsSchema, ImprovementComment, LLMImprovementValidationError
+from app.schemas.llm_response import (
+    ImprovementCommentsSchema,
+    ImprovementComment,
+    LLMImprovementValidationError,
+    DecisionSupport,
+    DecisionSupportSummary,
+    StrengthItem,
+    WeaknessItem,
+    RecommendationItem,
+    LLMDecisionSupportValidationError,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -148,12 +158,130 @@ class LLMValidatorService:
     
     def _detect_contradiction(self, issue: str, action: str) -> str:
         """相反表現の検知"""
-        
+
         for positive, negative in self.CONTRADICTORY_PAIRS:
             has_positive = positive in issue
             has_negative = negative in issue
-            
+
             if has_positive and has_negative:
                 return f"contains both '{positive}' and '{negative}'"
-        
+
         return ""
+
+    # ===== 意思決定支援（decision_support）バリデーション =====
+
+    def validate_decision_support(
+        self,
+        data: Dict[str, Any]
+    ) -> Union[DecisionSupport, LLMDecisionSupportValidationError]:
+        """
+        decision_support（強み・弱み・改善提案）をバリデーション
+
+        - summary / strengths / weaknesses / recommendations の必須構造を確認
+        - 各アイテムを Pydantic モデルで検証
+        - strengths/weaknesses/recommendations の本文に抽象語が含まれないか検査
+        - recommendation.target_weakness_ids が実在する weakness.id を参照しているか検査
+        """
+        if not isinstance(data, dict):
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="INVALID_STRUCTURE",
+                reason="Response is not a dictionary"
+            )
+
+        for required_field in ("summary", "strengths", "weaknesses", "recommendations"):
+            if required_field not in data:
+                return LLMDecisionSupportValidationError(
+                    success=False,
+                    error_code="MISSING_FIELD",
+                    reason=f"'{required_field}' field is required"
+                )
+
+        summary_data = data.get("summary")
+        if not isinstance(summary_data, dict):
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="INVALID_SUMMARY",
+                reason="'summary' must be an object"
+            )
+        try:
+            summary = DecisionSupportSummary(**summary_data)
+        except Exception as e:
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="SUMMARY_VALIDATION_FAILED",
+                reason=str(e)
+            )
+
+        strengths_data = data.get("strengths", [])
+        weaknesses_data = data.get("weaknesses", [])
+        recommendations_data = data.get("recommendations", [])
+        if not all(isinstance(x, list) for x in (strengths_data, weaknesses_data, recommendations_data)):
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="INVALID_LIST_TYPE",
+                reason="strengths/weaknesses/recommendations must be lists"
+            )
+
+        errors: List[str] = []
+
+        strengths: List[StrengthItem] = []
+        for idx, item in enumerate(strengths_data):
+            try:
+                strength = StrengthItem(**item)
+            except Exception as e:
+                errors.append(f"strength {idx}: {str(e)}")
+                continue
+            abstract_found = [w for w in self.ABSTRACT_WORDS if w in strength.title or w in strength.description]
+            if abstract_found:
+                errors.append(f"strength {idx}: contains abstract words {abstract_found}")
+                continue
+            strengths.append(strength)
+
+        weaknesses: List[WeaknessItem] = []
+        weakness_ids = set()
+        for idx, item in enumerate(weaknesses_data):
+            try:
+                weakness = WeaknessItem(**item)
+            except Exception as e:
+                errors.append(f"weakness {idx}: {str(e)}")
+                continue
+            abstract_found = [w for w in self.ABSTRACT_WORDS if w in weakness.title or w in weakness.description]
+            if abstract_found:
+                errors.append(f"weakness {idx}: contains abstract words {abstract_found}")
+                continue
+            weaknesses.append(weakness)
+            weakness_ids.add(weakness.id)
+
+        recommendations: List[RecommendationItem] = []
+        for idx, item in enumerate(recommendations_data):
+            try:
+                recommendation = RecommendationItem(**item)
+            except Exception as e:
+                errors.append(f"recommendation {idx}: {str(e)}")
+                continue
+            abstract_found = [w for w in self.ABSTRACT_WORDS if w in recommendation.what or w in recommendation.why]
+            if abstract_found:
+                errors.append(f"recommendation {idx}: contains abstract words {abstract_found}")
+                continue
+            missing_refs = [wid for wid in recommendation.target_weakness_ids if wid not in weakness_ids]
+            if missing_refs:
+                errors.append(
+                    f"recommendation {idx}: target_weakness_ids references unknown weakness id(s) {missing_refs}"
+                )
+                continue
+            recommendations.append(recommendation)
+
+        if errors:
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="ITEM_VALIDATION_FAILED",
+                reason="; ".join(errors[:3])
+            )
+
+        return DecisionSupport(
+            summary=summary,
+            strengths=strengths,
+            weaknesses=weaknesses,
+            recommendations=recommendations,
+        )

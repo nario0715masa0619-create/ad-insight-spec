@@ -1,6 +1,11 @@
 import pytest
 from app.services.llm_validator_service import LLMValidatorService
-from app.schemas.llm_response import ImprovementCommentsSchema, LLMImprovementValidationError
+from app.schemas.llm_response import (
+    ImprovementCommentsSchema,
+    LLMImprovementValidationError,
+    DecisionSupport,
+    LLMDecisionSupportValidationError,
+)
 
 class TestLLMValidatorService:
     """改善コメント品質検証テスト（5観点）"""
@@ -166,7 +171,7 @@ class TestLLMValidatorService:
         }
         
         result = validator.validate_improvement_comments(data)
-        
+
         # fail-soft: エラーを構造化して返す
         assert isinstance(result, LLMImprovementValidationError)
         assert result.success is False
@@ -175,3 +180,112 @@ class TestLLMValidatorService:
             "INVALID_STRUCTURE"
         ]
         assert len(result.reason) > 0
+
+
+class TestDecisionSupportValidation:
+    """decision_support（強み・弱み・改善提案）バリデーションテスト"""
+
+    @pytest.fixture
+    def validator(self):
+        return LLMValidatorService()
+
+    @pytest.fixture
+    def valid_data(self):
+        return {
+            "summary": {
+                "headline": "LPとの連動は強いが、動画冒頭のフックが弱くCTRで機会損失",
+                "decision": "改修推奨",
+                "rationale": "LP整合性は高いが、フックの抽象さが視聴維持率を下げている",
+            },
+            "strengths": [
+                {
+                    "id": "s1",
+                    "category": "lp",
+                    "title": "LPとの完全一致",
+                    "description": "広告文とLPのFVコピーが『成約率2倍』で完全一致している",
+                    "keep_reason": "信頼感とCVRに直結するため今後も維持すべき",
+                }
+            ],
+            "weaknesses": [
+                {
+                    "id": "w1",
+                    "priority": "P1",
+                    "category": "message",
+                    "title": "冒頭フックの抽象さ",
+                    "description": "動画冒頭3秒のテキストが抽象的で視聴維持につながっていない",
+                    "impact": "視聴完了率とCTRの両方を下げている",
+                }
+            ],
+            "recommendations": [
+                {
+                    "id": "r1",
+                    "priority": "P1",
+                    "target_weakness_ids": ["w1"],
+                    "title": "冒頭ペインポイント訴求への変更",
+                    "what": "動画0-3秒にペインポイント訴求のテキストを配置する",
+                    "why": "弱み『冒頭フックの抽象さ』を解消するため",
+                    "how": "既存クリエイティブとABテストしCTRを比較する",
+                    "expected_effect": "CTR改善を見込む",
+                }
+            ],
+        }
+
+    def test_valid_decision_support(self, validator, valid_data):
+        """正常な decision_support はそのまま検証を通過する"""
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, DecisionSupport)
+        assert result.strengths[0].id == "s1"
+        assert result.weaknesses[0].id == "w1"
+        assert result.recommendations[0].target_weakness_ids == ["w1"]
+
+    def test_missing_required_field(self, validator, valid_data):
+        """summary/strengths/weaknesses/recommendations のいずれか欠落は失敗"""
+        del valid_data["weaknesses"]
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert result.error_code == "MISSING_FIELD"
+
+    def test_unknown_target_weakness_id_rejected(self, validator, valid_data):
+        """recommendation が実在しない weakness id を参照している場合は失敗"""
+        valid_data["recommendations"][0]["target_weakness_ids"] = ["w999"]
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert "w999" in result.reason
+
+    def test_abstract_word_in_weakness_rejected(self, validator, valid_data):
+        """weakness の本文に抽象語が含まれる場合は失敗"""
+        valid_data["weaknesses"][0]["title"] = "訴求力が弱い"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+
+    def test_abstract_word_in_strength_rejected(self, validator, valid_data):
+        """strength の本文に抽象語が含まれる場合は失敗"""
+        valid_data["strengths"][0]["description"] = "全体的に魅力があるビジュアル"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+
+    def test_empty_arrays_do_not_crash(self, validator, valid_data):
+        """strengths/weaknesses/recommendations が空でもクラッシュせず成功として扱う"""
+        empty_data = {
+            "summary": valid_data["summary"],
+            "strengths": [],
+            "weaknesses": [],
+            "recommendations": [],
+        }
+        result = validator.validate_decision_support(empty_data)
+        assert isinstance(result, DecisionSupport)
+        assert result.strengths == []
+        assert result.weaknesses == []
+        assert result.recommendations == []
+
+    def test_recommendation_missing_why_rejected(self, validator, valid_data):
+        """recommendation に why が欠落している場合は失敗（What/Why/How必須）"""
+        del valid_data["recommendations"][0]["why"]
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+
+    def test_non_dict_input_rejected(self, validator):
+        """dict以外の入力は INVALID_STRUCTURE で失敗"""
+        result = validator.validate_decision_support(["not", "a", "dict"])
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert result.error_code == "INVALID_STRUCTURE"
