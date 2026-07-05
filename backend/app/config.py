@@ -6,10 +6,17 @@ from dotenv import load_dotenv
 
 # 環境変数を優先する。systemd の EnvironmentFile 経由で既に os.environ に
 # 値が入っている場合、load_dotenv() は既存の値を上書きしない（override=False）。
-# cwd 依存を避けるため、参照先は絶対パス1箇所に固定する。
-_ENV_FILE = "/etc/ad-insight-spec/.env"
-if os.path.exists(_ENV_FILE):
-    load_dotenv(dotenv_path=_ENV_FILE)
+# cwd 依存を避けるため、参照先は絶対パスの候補から存在するものを1つだけ使う。
+# - 本番VM: /etc/ad-insight-spec/.env
+# - ローカル開発（Windows/macOS/Linux共通の規約）: ~/.ad-insight-spec/.env
+_ENV_FILE_CANDIDATES = [
+    "/etc/ad-insight-spec/.env",
+    os.path.expanduser("~/.ad-insight-spec/.env"),
+]
+for _env_file in _ENV_FILE_CANDIDATES:
+    if os.path.exists(_env_file):
+        load_dotenv(dotenv_path=_env_file)
+        break
 
 class Settings(BaseSettings):
     """アプリケーション設定（環境変数ベース）"""
