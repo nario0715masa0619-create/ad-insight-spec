@@ -129,31 +129,84 @@ class AdInsightRepository:
         asset_id_filter: Optional[str] = None
     ) -> tuple[List[AdInsight], int]:
         """
-        有効なレコードの一覧取得（ページング + フィルタリング対応）
-        
+        有効なレコードの一覧取得（ページング + フィルタリング対応、全バージョン込み）
+
         Args:
             skip: スキップ件数（ページング）
             limit: 取得件数上限
             format_filter: フォーマットでフィルタ（オプション）
             asset_id_filter: asset_id でフィルタ（オプション）
-        
+
         Returns:
             (レコード一覧, 全体件数)
         """
         query = self.db.query(AdInsight).filter(AdInsight.is_deleted == False)
-        
+
         # フィルタ適用
         if format_filter:
             query = query.filter(AdInsight.format == format_filter)
         if asset_id_filter:
             query = query.filter(AdInsight.asset_id.like(f"%{asset_id_filter}%"))
-        
+
         # 全体件数
         total_count = query.count()
-        
+
         # ページング
         records = query.order_by(desc(AdInsight.created_at)).offset(skip).limit(limit).all()
-        
+
+        return records, total_count
+
+    def list_latest_per_asset(
+        self,
+        skip: int = 0,
+        limit: int = 10,
+        format_filter: Optional[str] = None,
+        asset_id_filter: Optional[str] = None
+    ) -> tuple[List[AdInsight], int]:
+        """
+        asset_id ごとの最新バージョンのみの一覧取得（ページング + フィルタリング対応）
+
+        一覧APIのデフォルト挙動用。同一 asset_id の旧バージョンは含めない。
+
+        Args:
+            skip: スキップ件数（ページング）
+            limit: 取得件数上限
+            format_filter: フォーマットでフィルタ（オプション）
+            asset_id_filter: asset_id でフィルタ（オプション）
+
+        Returns:
+            (レコード一覧, 全体件数（asset_id のユニーク数）)
+        """
+        latest_version_subq = (
+            self.db.query(
+                AdInsight.asset_id.label("asset_id"),
+                func.max(AdInsight.version).label("max_version"),
+            )
+            .filter(AdInsight.is_deleted == False)
+            .group_by(AdInsight.asset_id)
+            .subquery()
+        )
+
+        query = self.db.query(AdInsight).join(
+            latest_version_subq,
+            and_(
+                AdInsight.asset_id == latest_version_subq.c.asset_id,
+                AdInsight.version == latest_version_subq.c.max_version,
+            ),
+        ).filter(AdInsight.is_deleted == False)
+
+        # フィルタ適用
+        if format_filter:
+            query = query.filter(AdInsight.format == format_filter)
+        if asset_id_filter:
+            query = query.filter(AdInsight.asset_id.like(f"%{asset_id_filter}%"))
+
+        # 全体件数（asset_id のユニーク数）
+        total_count = query.count()
+
+        # ページング
+        records = query.order_by(desc(AdInsight.created_at)).offset(skip).limit(limit).all()
+
         return records, total_count
     
     # ===== UPDATE =====
