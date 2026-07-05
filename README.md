@@ -1,6 +1,6 @@
-# Ad-Insight-Spec
+# CampaignPilot（旧: Ad-Insight-Spec）
 
-Ad-Insight-Spec は、広告クリエイティブ（画像・動画）とランディングページ（LP）から抽出した情報を元に、LLM を用いて広告の定性・定量分析を行い、統合された JSON 仕様 (AdInsightSpec v0.2) に変換して管理するシステムです。
+CampaignPilot（旧: Ad-Insight-Spec）は、広告クリエイティブ（画像・動画）とランディングページ（LP）から抽出した情報を元に、LLM を用いて広告の定性・定量分析を行い、統合された JSON 仕様 (AdInsightSpec v0.2) に変換して管理するシステムです。
 
 ## クイックスタート
 

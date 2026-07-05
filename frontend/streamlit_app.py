@@ -165,8 +165,15 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
 
 
 # ページ設定
-st.set_page_config(page_title="Ad-Insight-Spec UI", layout="wide")
-st.title("📊 Ad-Insight-Spec")
+st.set_page_config(
+    page_title="CampaignPilot",
+    page_icon="📊",
+    layout="wide",
+    menu_items={
+        "About": "CampaignPilot — 広告・LP・KPIを横断して診断し、改善アクションを判断するためのサービスです。",
+    },
+)
+st.title("📊 CampaignPilot")
 
 # API ベース URL（環境に応じて変更可）
 API_BASE_URL = "http://localhost:8000/api/v1/specs"
@@ -434,4 +441,4 @@ with tab_saved:
 
 # ============ フッター ============
 st.divider()
-st.caption("Phase 2b Minimum UI | Ad-Insight-Spec v0.2")
+st.caption("Phase 2b Minimum UI | CampaignPilot v0.2")
