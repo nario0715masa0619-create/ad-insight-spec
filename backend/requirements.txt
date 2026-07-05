@@ -3,6 +3,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
+python-multipart>=0.0.6
 
 # Database
 sqlalchemy==2.0.23
@@ -12,6 +13,10 @@ alembic==1.12.1
 # LLM APIs
 google-generativeai==0.3.0
 openai==1.3.0
+
+# Image/OCR/HTML parsing
+opencv-python-headless>=4.8.0
+beautifulsoup4>=4.12.0
 
 # Utilities
 python-dotenv==1.0.0
@@ -32,7 +37,7 @@ python-dotenv>=1.0.0
 openai>=1.3.0
 
 pytesseract>=0.3.10
-# Note: Tesseract-OCR 本体は別途インストール必要
+# Note: Tesseract-OCR itself requires a separate native install (pytesseract is just a Python wrapper)
 # Windows: https://github.com/UB-Mannheim/tesseract/wiki
 # macOS: brew install tesseract
 # Linux: sudo apt-get install tesseract-ocr
