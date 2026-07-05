@@ -14,6 +14,20 @@ def widget_key(tab: str, action: str, entity_id=None, idx=None) -> str:
     return "_".join(parts)
 
 
+def refresh_saved_list():
+    # 削除成功時などに「保存済み結果」一覧をサーバー側の最新状態へ揃えるための再取得。
+    # skip/limit は一覧画面の number_input の現在値（widget state）をそのまま使う。
+    # 失敗しても一覧遷移自体は継続し、既存の「一覧取得」ボタンで手動リトライできる。
+    skip = st.session_state.get(widget_key("saved_list", "skip"), 0)
+    limit = st.session_state.get(widget_key("saved_list", "limit"), 10)
+    try:
+        response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
+        if response.status_code == 200:
+            st.session_state["list_items"] = response.json().get("items", [])
+    except Exception:
+        pass
+
+
 def init_session_state():
     # 新規分析 / 保存済み結果 の画面遷移は st.tabs() ではなく session_state で管理する。
     # st.tabs() は「新規分析」「保存済み結果」という大区分の切り替えにのみ使う。
@@ -329,6 +343,8 @@ with tab_saved:
                     st.session_state["current_view"] = "list"
                     st.session_state["selected_asset_id"] = None
                     st.session_state["selected_version"] = None
+                    # 削除直後の一覧に削除済みカードが残らないよう、最新状態を取得し直す
+                    refresh_saved_list()
 
                 render_asset_detail("saved_detail", detail, asset_id, on_delete_success=_back_to_list)
             else:
