@@ -41,10 +41,71 @@ def init_session_state():
         # 現在どの asset_id 向けに初期化済みかを覚えておくための追跡用。
         # widget 本体の値ではないので、rerun のたびに触らないこと。
         "detail_version_input_for_asset": None,
+        # analysis_result の復元をこのセッションで既に試みたかどうか。
+        # backend未起動時などに毎rerunで再試行してAPIを叩き続けないための一回性フラグ。
+        "analysis_result_restore_attempted": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+# ===== 新規分析タブの analysis_result: いつ更新/クリアするか =====
+# 通常のタブ切替や、他ウィジェット操作によるrerunでは analysis_result は
+# 一切触らない（st.session_state に保持し続けるだけ）。以下の3ケースのみ
+# 明示的に変更する:
+#   1. 新規/再分析が成功した (200 OK) 時: 常に最新結果で上書きする
+#      （set_analysis_result_query_params で URL にも asset_id/version を残す）
+#   2. 新規/再分析が失敗した時: 直前の成功結果を残さない
+#      （エラーの下に古い結果が居座る「矛盾した画面」を防ぐため None にする）
+#   3. 表示中のアセットが削除された時: 削除されたものを表示し続けない
+#
+# ブラウザの完全リロードや、Streamlitセッション自体の再作成（サーバー再起動後の
+# 再接続等）では session_state は失われるが、その場合は URL の query params
+# （result_asset_id / result_version）を手がかりに backend から結果を再取得し、
+# 同じ画面を復元する（restore_analysis_result_from_query_params）。
+def set_analysis_result_query_params(asset_id, version):
+    st.query_params["result_asset_id"] = str(asset_id)
+    st.query_params["result_version"] = str(version)
+
+
+def clear_analysis_result_query_params():
+    st.query_params.pop("result_asset_id", None)
+    st.query_params.pop("result_version", None)
+
+
+def restore_analysis_result_from_query_params():
+    # ページの完全リロード等で新しい Streamlit セッションが始まった直後だけ
+    # 復元を試みる。analysis_result が既にある場合や、一度復元を試みた後
+    # (backend未起動等で失敗した場合を含む) は毎rerunで再試行しない。
+    if st.session_state.get("analysis_result"):
+        return
+    if st.session_state.get("analysis_result_restore_attempted"):
+        return
+    st.session_state["analysis_result_restore_attempted"] = True
+
+    asset_id = st.query_params.get("result_asset_id")
+    version = st.query_params.get("result_version")
+    if not asset_id:
+        return
+
+    try:
+        url = f"{API_BASE_URL}/{asset_id}"
+        if version:
+            url += f"?version={version}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            st.session_state["analysis_result"] = result
+            st.session_state["selected_asset_id"] = result.get("asset_meta", {}).get("asset_id")
+            st.session_state["selected_version"] = result.get("version")
+        else:
+            # 対象アセットが削除済み等で見つからない場合は、URLの手がかりも消す。
+            clear_analysis_result_query_params()
+    except Exception:
+        # backend未起動時などはここで静かに諦める（画面には何も出さない）。
+        # 次にbackendが起動してからページを開き直せば復元される。
+        pass
 
 
 CATEGORY_LABELS = {
@@ -111,6 +172,9 @@ def render_strengths(strengths: list):
             keep_reason = s.get("keep_reason")
             if keep_reason:
                 st.caption(f"🔒 この要素は残すべき理由: {keep_reason}")
+            evidence = s.get("evidence")
+            if evidence:
+                st.caption(f"🔍 判断根拠: {evidence}")
 
 
 def render_weaknesses(weaknesses: list):
@@ -128,6 +192,9 @@ def render_weaknesses(weaknesses: list):
             impact = w.get("impact")
             if impact:
                 st.caption(f"⚠️ 放置した場合の影響: {impact}")
+            evidence = w.get("evidence")
+            if evidence:
+                st.caption(f"🔍 判断根拠: {evidence}")
 
 
 def render_recommendations(recommendations: list, weaknesses: list):
@@ -292,17 +359,42 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
     # st.rerun() はここでは呼ばない（expander/コンテナの内側から呼ぶと、直前まで
     # 描画されていた要素が残留することがあるため）。削除成功の判定だけ行い、
     # expander を抜けた後にまとめて rerun する。
+    #
+    # 削除APIは asset_id 単位（DELETE /{asset_id}）であり、現在表示中の
+    # version だけでなく、この asset_id の全バージョンをまとめて論理削除する。
+    # UI上でその範囲を誤解しないよう、対象・粒度・削除後の挙動を明示する。
     delete_succeeded = False
-    with st.expander("⚠️ 削除", expanded=False, key=widget_key(tab_key, "expander_delete", asset_id)):
+    displayed_version = detail.get("version")
+    with st.expander(
+        f"⚠️ この分析結果を削除（{asset_id} の全バージョンが対象）",
+        expanded=False,
+        key=widget_key(tab_key, "expander_delete", asset_id),
+    ):
+        st.caption(
+            f"🆔 対象 Asset ID: `{asset_id}`"
+            + (f"（現在表示中: version {displayed_version}）" if displayed_version else "")
+        )
+        st.write(
+            "**削除の範囲**: version 単位ではなく、この asset_id に紐づく"
+            "**全バージョン**が対象です。特定バージョンだけを消すことはできません。"
+        )
+        st.write(
+            "**削除後**: 論理削除（データベース上は残り、管理者が必要なら復元可能）"
+            "され、「保存済み結果」の一覧・詳細からは見えなくなります。"
+            "この画面上からの取り消しはできません。"
+        )
         confirm = st.checkbox(
-            "この Asset を削除してもよろしいですか？（論理削除）",
+            f"上記を理解した上で、{asset_id} の全バージョンを削除します",
             key=widget_key(tab_key, "delete_confirm", asset_id),
         )
-        if confirm and st.button("🔴 削除実行", key=widget_key(tab_key, "delete_execute", asset_id)):
+        if confirm and st.button(
+            f"🔴 {asset_id} を削除する（全バージョン・元に戻せません）",
+            key=widget_key(tab_key, "delete_execute", asset_id),
+        ):
             try:
                 response = requests.delete(f"{API_BASE_URL}/{asset_id}")
                 if response.status_code == 200:
-                    st.success("✅ 削除完了（論理削除）")
+                    st.success(f"✅ {asset_id} の全バージョンを削除しました（論理削除）")
                     delete_succeeded = True
                 else:
                     st.error(f"❌ エラー: {response.status_code}\n{response.text}")
@@ -330,6 +422,7 @@ st.title("📊 CampaignPilot")
 API_BASE_URL = "http://localhost:8000/api/v1/specs"
 
 init_session_state()
+restore_analysis_result_from_query_params()
 
 # 上位ナビゲーションは「新規分析」「保存済み結果」の2区分のみ。
 # 詳細表示への遷移は st.tabs() ではなく session_state（current_view 等）で管理する。
@@ -415,8 +508,13 @@ with tab_new:
                     st.session_state["analysis_result"] = result
                     # 「保存済み結果」タブへ移動した場合でも、直近に分析したこの
                     # asset/version が selected として引き継がれるようにする。
-                    st.session_state["selected_asset_id"] = result.get("asset_meta", {}).get("asset_id")
-                    st.session_state["selected_version"] = result.get("version")
+                    result_id = result.get("asset_meta", {}).get("asset_id")
+                    result_version = result.get("version")
+                    st.session_state["selected_asset_id"] = result_id
+                    st.session_state["selected_version"] = result_version
+                    # ページリロード等でセッションが失われても復元できるよう、
+                    # URLにも同じ asset_id/version を残しておく。
+                    set_analysis_result_query_params(result_id, result_version)
                 else:
                     add_log(f"❌ エラー: {response.status_code}")
                     try:
@@ -425,6 +523,7 @@ with tab_new:
                         err_json = None
 
                     st.session_state["analysis_result"] = None
+                    clear_analysis_result_query_params()
 
                     if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
                         st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
@@ -442,6 +541,8 @@ with tab_new:
                     ):
                         st.json(err_json if err_json else {"raw_response": response.text})
             except Exception as e:
+                st.session_state["analysis_result"] = None
+                clear_analysis_result_query_params()
                 add_log(f"❌ エラー内容: {str(e)}")
                 st.error(f"❌ API 呼び出しエラー: {str(e)}")
         else:
@@ -459,6 +560,7 @@ with tab_new:
 
         def _clear_analysis_result():
             st.session_state["analysis_result"] = None
+            clear_analysis_result_query_params()
 
         render_asset_detail("analyze", result, result_asset_id, on_delete_success=_clear_analysis_result)
 
