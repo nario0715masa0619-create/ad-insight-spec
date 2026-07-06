@@ -31,11 +31,75 @@ class ImprovementCommentsSchema(BaseModel):
 
 class LLMImprovementValidationError(BaseModel):
     """改善コメント生成時のバリデーションエラー（fail-soft）"""
-    
+
     success: bool = False
     error_code: str = Field(..., description="エラーコード")
     reason: str = Field(..., description="エラー理由")
     fallback_content: Optional[Dict[str, Any]] = Field(default=None, description="代替内容（部分的に有効な結果）")
+
+
+# ===== 意思決定支援（decision_support）用スキーマ =====
+# 「強み・弱み・改善提案」を意思決定用に構造化するブロック。
+# 既存の ImprovementCommentsSchema（diagnostics.improvements）とは独立した並存フィールドで、
+# 後方互換のため diagnostics.decision_support は Optional として扱う（未生成・旧データでも欠落を許容）。
+
+class DecisionSupportSummary(BaseModel):
+    """結論サマリー（画面最上部のカードに使う）"""
+
+    headline: str = Field(..., description="一言結論", min_length=5, max_length=80)
+    decision: str = Field(..., description="継続 / 改修推奨 / 停止検討 等の短い判断ラベル", min_length=2, max_length=20)
+    rationale: str = Field(..., description="判断理由（強み・弱みの要約）", min_length=10, max_length=200)
+
+
+class StrengthItem(BaseModel):
+    """強み: 今後も維持・再利用すべき勝ち要素（「よかった点」ではない）"""
+
+    id: str = Field(..., description="weakness/recommendation から参照するための識別子")
+    category: str = Field(..., description="visual/message/cta/target/lp/brand 等の短いラベル", min_length=2, max_length=20)
+    title: str = Field(..., description="要素名", min_length=3, max_length=60)
+    description: str = Field(..., description="何が良いかの具体説明", min_length=10, max_length=200)
+    keep_reason: str = Field(..., description="今後も維持・再利用すべき理由", min_length=10, max_length=200)
+
+
+class WeaknessItem(BaseModel):
+    """弱み: 成果の足を引っ張っているボトルネック"""
+
+    id: str = Field(..., description="recommendation.target_weakness_ids から参照される識別子")
+    priority: PriorityLevel = Field(..., description="P0（致命的）/ P1（改善推奨）/ P2（伸び代）")
+    category: str = Field(..., description="visual/message/cta/target/lp/brand 等の短いラベル", min_length=2, max_length=20)
+    title: str = Field(..., description="問題名", min_length=3, max_length=60)
+    description: str = Field(..., description="何が問題かの具体説明", min_length=10, max_length=200)
+    impact: str = Field(..., description="放置した場合の成果への影響", min_length=10, max_length=200)
+
+
+class RecommendationItem(BaseModel):
+    """改善提案: What / Why / How の3点セットを必須とする"""
+
+    id: str = Field(..., description="識別子")
+    priority: PriorityLevel = Field(..., description="P0（致命的）/ P1（改善推奨）/ P2（伸び代）")
+    target_weakness_ids: List[str] = Field(..., description="対応する weakness の id（最低1件）", min_length=1)
+    title: str = Field(..., description="提案名", min_length=3, max_length=60)
+    what: str = Field(..., description="何を変えるか（対象と変更内容）", min_length=10, max_length=200)
+    why: str = Field(..., description="なぜ変えるか（対応する弱みへの言及を含む）", min_length=10, max_length=200)
+    how: str = Field(..., description="どう検証するか（簡易な検証方法）", min_length=10, max_length=200)
+    expected_effect: Optional[str] = Field(default=None, description="期待される効果", max_length=150)
+
+
+class DecisionSupport(BaseModel):
+    """意思決定支援ブロック（強み・弱み・改善提案）"""
+
+    summary: DecisionSupportSummary = Field(..., description="結論サマリー")
+    strengths: List[StrengthItem] = Field(default=[], description="強み（維持・再利用すべき勝ち要素）")
+    weaknesses: List[WeaknessItem] = Field(default=[], description="弱み（ボトルネック）")
+    recommendations: List[RecommendationItem] = Field(default=[], description="改善提案（What/Why/How必須）")
+
+
+class LLMDecisionSupportValidationError(BaseModel):
+    """decision_support 生成時のバリデーションエラー（fail-soft）"""
+
+    success: bool = False
+    error_code: str = Field(..., description="エラーコード")
+    reason: str = Field(..., description="エラー理由")
 
 
 class VisualsSchema(BaseModel):

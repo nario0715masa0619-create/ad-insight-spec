@@ -61,62 +61,119 @@ def init_session_state():
             st.session_state[key] = value
 
 
-def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_success=None):
-    """
-    分析結果1件分の詳細表示（CreativeCore / 改善提案 / JSON / ダウンロード / 削除）。
+CATEGORY_LABELS = {
+    "visual": "🎨 ビジュアル・構成",
+    "message": "💬 メッセージ・トーン",
+    "cta": "📣 CTA",
+    "target": "🎯 ターゲット適合",
+    "lp": "🔗 LP連動",
+    "brand": "🏷️ ブランド",
+}
 
-    「新規分析」完了直後の結果表示と、「保存済み結果」からの詳細表示の両方で使う共通描画関数。
-    tab_key は widget key の名前空間分離用（呼び出し元ごとにユニークにする）。
-    """
-    asset_meta = detail.get("asset_meta", {}) or {}
-    creative_core = detail.get("creative_core", {}) or {}
-    diagnostics = detail.get("diagnostics", {}) or {}
-    improvements = diagnostics.get("improvements")
-    improvements_error = diagnostics.get("improvements_error")
+PRIORITY_LABELS = {
+    "P0": "🔴 P0（致命的）",
+    "P1": "🟠 P1（改善推奨）",
+    "P2": "🟡 P2（伸び代）",
+}
 
-    st.write(
-        f"**🆔 Asset ID**: {asset_meta.get('asset_id', asset_id)}"
-        f"（`{creative_core.get('format', 'N/A')}`）"
-    )
+PRIORITY_SORT_ORDER = {"P0": 0, "P1": 1, "P2": 2}
 
-    if improvements and improvements.get("summary"):
-        st.write(f"**📝 1行要約**: {improvements['summary']}")
+DECISION_LABELS = {
+    "継続": "✅ 継続",
+    "改修推奨": "🛠️ 改修推奨",
+    "停止検討": "🛑 停止検討",
+}
 
-    visuals = creative_core.get("visuals", {}) or {}
-    tone = creative_core.get("tone", {}) or {}
-    ai_labels = creative_core.get("ai_labels", []) or []
-    if visuals or tone or ai_labels:
-        st.markdown("### 🎨 CreativeCore 分析結果")
-        colors = "、".join(visuals.get("dominant_colors", []) or []) or "情報なし"
-        st.write(
-            f"**🖼️ ビジュアル**: 色調は{colors}。"
-            f"構図は{visuals.get('composition', 'N/A')}。"
-            f"スタイルは{visuals.get('style', 'N/A')}。"
-            f"視認性は{visuals.get('clarity', 'N/A')}。"
-        )
-        tones = "、".join(tone.get("primary_tone", []) or []) or "情報なし"
-        st.write(
-            f"**🎭 トーン**: {tones}を基調とし、"
-            f"訴求は{tone.get('emotional_appeal', 'N/A')}型。"
-            f"CTAの強さは{tone.get('call_to_action', 'N/A')}。"
-        )
-        if ai_labels:
-            st.write(f"**🏷️ AIラベル**: {', '.join(ai_labels)}")
 
-        with st.expander(
-            "🔧 Visuals / Tone / Labels（JSON・デバッグ用）",
-            expanded=False,
-            key=widget_key(tab_key, "expander_visuals_tone_labels", asset_id),
-        ):
-            st.json({"visuals": visuals, "tone": tone, "ai_labels": ai_labels})
+def category_label(category) -> str:
+    if not category:
+        return "🔸 その他"
+    return CATEGORY_LABELS.get(category, f"🔸 {category}")
 
-    st.markdown("### ✨ 改善提案")
+
+def priority_label(priority) -> str:
+    if not priority:
+        return "⚪ 優先度未設定"
+    return PRIORITY_LABELS.get(priority, f"⚪ {priority}")
+
+
+def sort_by_priority(items: list) -> list:
+    return sorted(items, key=lambda item: PRIORITY_SORT_ORDER.get(item.get("priority"), 99))
+
+
+def render_decision_summary(summary: dict):
+    headline = summary.get("headline") or "結論サマリー"
+    decision = summary.get("decision")
+    rationale = summary.get("rationale")
+    with st.container(border=True):
+        st.markdown(f"## 🧭 {headline}")
+        if decision:
+            st.markdown(f"**判断: {DECISION_LABELS.get(decision, decision)}**")
+        if rationale:
+            st.write(rationale)
+
+
+def render_strengths(strengths: list):
+    st.markdown("### 🟢 強み（維持・再利用すべき勝ち要素）")
+    if not strengths:
+        st.info("特筆すべき強みは検出されませんでした。")
+        return
+    for s in strengths:
+        with st.container(border=True):
+            st.markdown(f"**{category_label(s.get('category'))} | {s.get('title', '（無題）')}**")
+            st.write(s.get("description", ""))
+            keep_reason = s.get("keep_reason")
+            if keep_reason:
+                st.caption(f"🔒 この要素は残すべき理由: {keep_reason}")
+
+
+def render_weaknesses(weaknesses: list):
+    st.markdown("### 🔴 弱み（成果を下げているボトルネック）")
+    if not weaknesses:
+        st.info("特筆すべき弱みは検出されませんでした。")
+        return
+    for w in sort_by_priority(weaknesses):
+        with st.container(border=True):
+            st.markdown(
+                f"**{priority_label(w.get('priority'))} | "
+                f"{category_label(w.get('category'))} | {w.get('title', '（無題）')}**"
+            )
+            st.write(w.get("description", ""))
+            impact = w.get("impact")
+            if impact:
+                st.caption(f"⚠️ 放置した場合の影響: {impact}")
+
+
+def render_recommendations(recommendations: list, weaknesses: list):
+    st.markdown("### ✨ 改善提案（What / Why / How）")
+    if not recommendations:
+        st.info("改善提案はありません。")
+        return
+    weakness_title_by_id = {w.get("id"): w.get("title") for w in weaknesses if w.get("id")}
+    for r in sort_by_priority(recommendations):
+        with st.container(border=True):
+            target_ids = r.get("target_weakness_ids") or []
+            target_labels = [f"「{weakness_title_by_id.get(wid, wid)}」" for wid in target_ids]
+            st.markdown(f"**{priority_label(r.get('priority'))} | {r.get('title', '（無題）')}**")
+            if target_labels:
+                st.caption(f"🔗 対応する弱み: {', '.join(target_labels)}")
+            st.write(f"**What（何を変えるか）**: {r.get('what', 'N/A')}")
+            st.write(f"**Why（なぜ変えるか）**: {r.get('why', 'N/A')}")
+            st.write(f"**How（どう検証するか）**: {r.get('how', 'N/A')}")
+            expected_effect = r.get("expected_effect")
+            if expected_effect:
+                st.caption(f"📈 期待効果: {expected_effect}")
+
+
+def render_legacy_improvements(tab_key: str, asset_id: str, improvements: dict, improvements_error: dict):
+    """decision_support が無い（旧データ・生成失敗）場合の従来形式フォールバック表示。"""
+    st.markdown("### ✨ 改善提案（従来形式）")
     if improvements_error:
         st.warning(f"⚠️ 改善コメント生成に失敗しました (Error: {improvements_error.get('error_code', 'UNKNOWN')})")
         reason = improvements_error.get("reason")
         if reason:
             st.write(f"**理由**: {reason}")
-        st.write("**次のアクション**: 時間をおいて再度分析を実行するか、上記 CreativeCore 分析結果（トーン・ビジュアル）を参考に改善を検討してください。")
+        st.write("**次のアクション**: 時間をおいて再度分析を実行するか、下記の CreativeCore 分析結果（トーン・ビジュアル）を参考に改善を検討してください。")
     elif improvements and improvements.get("comments"):
         comments = improvements.get("comments", [])
         for i, c in enumerate(comments[:3]):
@@ -140,6 +197,96 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
                 st.write(f"**次にやること**: {c.get('recommended_action', 'N/A')}")
     else:
         st.info("改善コメントはありません。")
+
+
+def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_success=None):
+    """
+    分析結果1件分の詳細表示（意思決定支援 / 補助情報 / ダウンロード / 削除）。
+
+    「新規分析」完了直後の結果表示と、「保存済み結果」からの詳細表示の両方で使う共通描画関数。
+    tab_key は widget key の名前空間分離用（呼び出し元ごとにユニークにする）。
+    """
+    asset_meta = detail.get("asset_meta", {}) or {}
+    creative_core = detail.get("creative_core", {}) or {}
+    diagnostics = detail.get("diagnostics", {}) or {}
+    improvements = diagnostics.get("improvements")
+    improvements_error = diagnostics.get("improvements_error")
+    decision_support = diagnostics.get("decision_support")
+    decision_support_error = diagnostics.get("decision_support_error")
+
+    st.write(
+        f"**🆔 Asset ID**: {asset_meta.get('asset_id', asset_id)}"
+        f"（`{creative_core.get('format', 'N/A')}`）"
+    )
+
+    # ===== 主画面: 意思決定支援（strengths / weaknesses / recommendations） =====
+    # decision_support が無い（旧データ、または今回の生成が失敗した）場合は、
+    # クラッシュせず従来形式の改善コメント表示にフォールバックする。
+    if decision_support:
+        render_decision_summary(decision_support.get("summary", {}) or {})
+        render_strengths(decision_support.get("strengths", []) or [])
+        weaknesses = decision_support.get("weaknesses", []) or []
+        render_weaknesses(weaknesses)
+        render_recommendations(decision_support.get("recommendations", []) or [], weaknesses)
+    else:
+        if decision_support_error:
+            st.warning(
+                "⚠️ 意思決定支援（強み・弱み・改善提案）の生成に失敗したため、"
+                f"従来形式で表示しています (Error: {decision_support_error.get('error_code', 'UNKNOWN')})"
+            )
+        else:
+            st.caption("ℹ️ この結果は意思決定支援UIの追加前に作成されたため、従来形式で表示しています。")
+        render_legacy_improvements(tab_key, asset_id, improvements, improvements_error)
+
+    # ===== 補助情報（折りたたみ）: CreativeCore / 改善コメント原文 / LLMメタデータ / 完全なJSON =====
+    visuals = creative_core.get("visuals", {}) or {}
+    tone = creative_core.get("tone", {}) or {}
+    ai_labels = creative_core.get("ai_labels", []) or []
+    with st.expander(
+        "🔍 診断根拠データ（CreativeCore分析結果）",
+        expanded=False,
+        key=widget_key(tab_key, "expander_creative_core", asset_id),
+    ):
+        if visuals or tone or ai_labels:
+            colors = "、".join(visuals.get("dominant_colors", []) or []) or "情報なし"
+            st.write(
+                f"**🖼️ ビジュアル**: 色調は{colors}。"
+                f"構図は{visuals.get('composition', 'N/A')}。"
+                f"スタイルは{visuals.get('style', 'N/A')}。"
+                f"視認性は{visuals.get('clarity', 'N/A')}。"
+            )
+            tones = "、".join(tone.get("primary_tone", []) or []) or "情報なし"
+            st.write(
+                f"**🎭 トーン**: {tones}を基調とし、"
+                f"訴求は{tone.get('emotional_appeal', 'N/A')}型。"
+                f"CTAの強さは{tone.get('call_to_action', 'N/A')}。"
+            )
+            if ai_labels:
+                st.write(f"**🏷️ AIラベル**: {', '.join(ai_labels)}")
+            st.json({"visuals": visuals, "tone": tone, "ai_labels": ai_labels})
+        else:
+            st.info("CreativeCore分析結果はありません。")
+
+        # decision_support がある場合、改善コメント原文（improvements）はここに参考情報として残す。
+        if decision_support and improvements and improvements.get("comments"):
+            st.markdown("##### 🗒️ 生成された改善コメント（原文・参考情報）")
+            st.json(improvements)
+
+    if diagnostics:
+        with st.expander(
+            "🤖 LLM分析メタデータ",
+            expanded=False,
+            key=widget_key(tab_key, "expander_llm_meta", asset_id),
+        ):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Model", diagnostics.get("llm_model", "N/A"))
+            with col2:
+                st.metric("Success", "✅" if diagnostics.get("llm_success") else "❌")
+            with col3:
+                st.metric("Retries", diagnostics.get("llm_retry_count", 0))
+            if diagnostics.get("llm_error"):
+                st.error(f"⚠️ エラー: {diagnostics['llm_error']}")
 
     with st.expander(
         "🔧 完全な分析結果（JSON・デバッグ用）",
@@ -330,19 +477,7 @@ with tab_new:
         result_asset_id = result.get("asset_meta", {}).get("asset_id", "unknown")
 
         st.success("✅ 分析完了！")
-
-        diagnostics = result.get("diagnostics", {})
-        if diagnostics:
-            st.markdown("### 📊 LLM 分析メタデータ")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Model", diagnostics.get("llm_model", "N/A"))
-            with col2:
-                st.metric("Success", "✅" if diagnostics.get("llm_success") else "❌")
-            with col3:
-                st.metric("Retries", diagnostics.get("llm_retry_count", 0))
-            if diagnostics.get("llm_error"):
-                st.error(f"⚠️ エラー: {diagnostics['llm_error']}")
+        # LLM分析メタデータは render_asset_detail 内の折りたたみ（補助情報）に統合済み。
 
         def _clear_analysis_result():
             st.session_state["analysis_result"] = None

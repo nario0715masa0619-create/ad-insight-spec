@@ -10,7 +10,14 @@ from pydantic.v1 import ValidationError
 from typing import Union
 import logging
 
-from app.schemas.llm_response import LLMResponseSchema, CreativeCoreSchema, ImprovementCommentsSchema, LLMImprovementValidationError
+from app.schemas.llm_response import (
+    LLMResponseSchema,
+    CreativeCoreSchema,
+    ImprovementCommentsSchema,
+    LLMImprovementValidationError,
+    DecisionSupport,
+    LLMDecisionSupportValidationError,
+)
 from app.services.llm_validator_service import LLMValidatorService
 
 logger = logging.getLogger(__name__)
@@ -397,4 +404,176 @@ class LLMService:
             success=False,
             error_code="MAX_RETRIES_EXCEEDED",
             reason=f"Failed to generate valid improvement comments after {LLMService.MAX_RETRIES} attempts"
+        )
+
+    # ===== 意思決定支援（decision_support: 強み・弱み・改善提案）生成 =====
+
+    DECISION_SUPPORT_PROMPT = """
+あなたは広告クリエイティブの意思決定支援を行う専門家です。
+以下のクリエイティブ分析結果をもとに、広告運用の専門家とは限らない担当者が
+「配信を続けるか改修するか」「次に何から着手するか」を5秒で判断できるよう、
+強み・弱み・改善提案を JSON 形式で構造化してください。
+
+【分析対象情報（CreativeCore）】
+{analysis_data}
+
+【必須ルール】
+1. strengths（強み）は「今後も維持・再利用すべき勝ち要素」として書く。単なる褒め言葉（「良い」「魅力的」等）は禁止。何がどう良いか、なぜ維持すべきかを具体的に書く。
+2. weaknesses（弱み）は成果の足を引っ張っているボトルネックとして書く。
+3. strengths / weaknesses の本文には次の抽象語を使用禁止: 改善余地・訴求力・魅力・分かりやすさ・インパクト・工夫・仕掛け・チカラ・違和感
+4. recommendations（改善提案）は必ず what / why / how の3点を書く。
+   - what: 何を変えるか（対象と変更内容を具体的に）
+   - why: なぜ変えるか（対応する weakness への言及を必ず含める。抽象論禁止）
+   - how: どう検証するか（簡易な検証方法。ABテスト・比較指標など）
+5. 各 recommendation は必ず target_weakness_ids で対応する weakness の id を最低1つ指定する。存在しない id を指定しない。
+6. id は strengths は "s1","s2"...、weaknesses は "w1","w2"...、recommendations は "r1","r2"... のように短い連番文字列にする。
+7. category は次の中から選ぶ: visual, message, cta, target, lp, brand
+8. priority は weaknesses / recommendations ともに P0（致命的・即対応）/ P1（改善推奨）/ P2（伸び代）のいずれか。
+9. 一般論・抽象論を避け、実際の制作・運用にそのまま渡せる粒度で書く（誰が読んでも次のアクションが分かること）。
+10. strengths や weaknesses が本当に見当たらない場合は空配列 [] でよい。weaknesses が空なら recommendations も空配列でよい。
+
+【JSON 出力フォーマット（必須・これ以外の説明文は一切含めない）】
+{{
+    "summary": {{
+        "headline": "一言結論（例: LPとの連動は強いが、動画冒頭のフックが弱くCTRで機会損失）",
+        "decision": "継続 または 改修推奨 または 停止検討",
+        "rationale": "上記判断の理由（強み・弱みの要約）"
+    }},
+    "strengths": [
+        {{
+            "id": "s1",
+            "category": "lp",
+            "title": "LPとの完全一致",
+            "description": "広告文とLPのファーストビューが『成約率2倍』で完全一致している",
+            "keep_reason": "この整合性は信頼感とCVRに直結するため、今後の改修でも必ず維持すること"
+        }}
+    ],
+    "weaknesses": [
+        {{
+            "id": "w1",
+            "priority": "P1",
+            "category": "message",
+            "title": "冒頭フックの抽象さ",
+            "description": "動画冒頭3秒のテキストが抽象的で、視聴維持につながっていない",
+            "impact": "スクロール離脱が増え、視聴完了率・CTRの両方を下げている"
+        }}
+    ],
+    "recommendations": [
+        {{
+            "id": "r1",
+            "priority": "P1",
+            "target_weakness_ids": ["w1"],
+            "title": "冒頭ペインポイント訴求への変更",
+            "what": "動画0〜3秒に『〜でお悩みですか？』というペインポイント訴求のテキストを大きく配置する",
+            "why": "弱み『冒頭フックの抽象さ』を解消し、視聴維持率を上げるため",
+            "how": "既存クリエイティブとABテストし、3秒視聴率とCTRを3日間比較する",
+            "expected_effect": "3秒視聴率+10%、CTR改善を見込む"
+        }}
+    ]
+}}
+
+【出力注意】
+- JSON 以外の説明文は一切含めない
+- strengths / weaknesses / recommendations が 0 件の場合も配列構造は保持する（例: "strengths": []）
+"""
+
+    @staticmethod
+    def generate_decision_support(
+        creative_analysis: dict,
+        model: str = "gpt"
+    ) -> Union[DecisionSupport, LLMDecisionSupportValidationError]:
+        """
+        LLM で意思決定支援ブロック（強み・弱み・改善提案）を生成（再試行・バリデーション対応）
+
+        既存の analyze_creative_improvements とは独立した呼び出しであり、
+        本メソッドの失敗は diagnostics.improvements の生成には影響しない（fail-soft）。
+        """
+        from app.config import get_settings
+        settings = get_settings()
+        openai_api_key = settings.OPENAI_API_KEY
+        if not openai_api_key and model == "gpt":
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="API_KEY_MISSING",
+                reason="OPENAI_API_KEY is not configured"
+            )
+
+        analysis_json = json.dumps(creative_analysis, ensure_ascii=False, indent=2)
+        prompt = LLMService.DECISION_SUPPORT_PROMPT.format(analysis_data=analysis_json)
+
+        for attempt in range(LLMService.MAX_RETRIES):
+            try:
+                if model == "gpt":
+                    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+                    http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
+                    client = openai.OpenAI(api_key=openai_api_key, http_client=http_client)
+                    response = client.chat.completions.create(
+                        model=LLMService.GPT_MODEL,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert ad creative decision-support analyst. Return only valid JSON."
+                            },
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=2000
+                    )
+                    response_text = response.choices[0].message.content
+                else:  # gemini
+                    model_obj = genai.GenerativeModel(LLMService.GEMINI_MODEL)
+                    response = model_obj.generate_content(prompt)
+                    response_text = response.text
+
+                json_text = response_text.strip()
+                if "```json" in json_text:
+                    json_start = json_text.find("```json") + 7
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+                elif "```" in json_text:
+                    json_start = json_text.find("```") + 3
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+
+                data = json.loads(json_text)
+
+                validator = LLMValidatorService()
+                decision_support = validator.validate_decision_support(data)
+
+                if isinstance(decision_support, DecisionSupport):
+                    logger.info(f"Decision support generated successfully (attempt {attempt + 1})")
+                    return decision_support
+                else:
+                    logger.warning(f"Decision support validation failed (attempt {attempt + 1}): {decision_support.reason}")
+                    if attempt < LLMService.MAX_RETRIES - 1:
+                        continue
+                    else:
+                        return decision_support
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Decision support JSON parse error (attempt {attempt + 1}): {str(e)}")
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return LLMDecisionSupportValidationError(
+                        success=False,
+                        error_code="JSON_PARSE_ERROR",
+                        reason=f"Failed to parse LLM response as JSON: {str(e)}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Decision support LLM error (attempt {attempt + 1}): {str(e)}")
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return LLMDecisionSupportValidationError(
+                        success=False,
+                        error_code="LLM_ERROR",
+                        reason=f"LLM generation failed: {str(e)}"
+                    )
+
+        return LLMDecisionSupportValidationError(
+            success=False,
+            error_code="MAX_RETRIES_EXCEEDED",
+            reason=f"Failed to generate valid decision support after {LLMService.MAX_RETRIES} attempts"
         )

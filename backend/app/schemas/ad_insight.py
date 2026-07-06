@@ -23,7 +23,12 @@ from typing import Optional, List, Dict, Any
 from pydantic.v1 import BaseModel, Field, validator, root_validator
 from datetime import datetime
 from enum import Enum
-from app.schemas.llm_response import ImprovementCommentsSchema, LLMImprovementValidationError
+from app.schemas.llm_response import (
+    ImprovementCommentsSchema,
+    LLMImprovementValidationError,
+    DecisionSupport,
+    LLMDecisionSupportValidationError,
+)
 
 
 # ===== Enumerations =====
@@ -469,7 +474,18 @@ class Diagnostics(BaseModel):
         default=None,
         description="改善コメント生成失敗時のエラー情報"
     )
-    
+
+    # ===== 新規: 意思決定支援ブロック（strengths/weaknesses/recommendations、optional） =====
+    # 旧データや生成失敗時は None のままとし、UI 側でフォールバック表示する（後方互換）。
+    decision_support: Optional[DecisionSupport] = Field(
+        default=None,
+        description="意思決定支援ブロック（強み・弱み・改善提案、What/Why/How必須）"
+    )
+    decision_support_error: Optional[LLMDecisionSupportValidationError] = Field(
+        default=None,
+        description="意思決定支援生成失敗時のエラー情報"
+    )
+
     llm_model: Optional[str] = Field(None, description="LLM Model")
     llm_success: Optional[bool] = Field(None, description="LLM Success")
     llm_retry_count: Optional[int] = Field(None, description="LLM Retry Count")
