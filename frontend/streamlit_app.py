@@ -5,6 +5,20 @@ import os
 from datetime import datetime
 
 
+def render_api_exception(e: Exception):
+    # requests.exceptions.ConnectionError（backend未起動・落ちている等）は、
+    # 生の urllib3 スタックトレース文字列をそのまま出すとユーザーには「壊れた」
+    # ように見えるため、原因が分かる穏当なメッセージに差し替える。
+    # それ以外の例外は従来通り str(e) を出して調査可能にする。
+    if isinstance(e, requests.exceptions.ConnectionError):
+        st.error(
+            f"❌ バックエンドAPI（{API_BASE_URL}）に接続できません。"
+            "バックエンドサーバーが起動しているか確認してください。"
+        )
+    else:
+        st.error(f"❌ API 呼び出しエラー: {str(e)}")
+
+
 def widget_key(tab: str, action: str, entity_id=None, idx=None) -> str:
     # Streamlit runs every `with tabX:` block on every rerun, so keys must be
     # unique across the whole app, not just within one tab or one loop.
@@ -399,7 +413,7 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
                 else:
                     st.error(f"❌ エラー: {response.status_code}\n{response.text}")
             except Exception as e:
-                st.error(f"❌ API 呼び出しエラー: {str(e)}")
+                render_api_exception(e)
 
     if delete_succeeded:
         if on_delete_success:
@@ -541,10 +555,19 @@ with tab_new:
                     ):
                         st.json(err_json if err_json else {"raw_response": response.text})
             except Exception as e:
+                # 前回成功時の analysis_result が残ったままだと、今回の接続エラー
+                # メッセージの下に古い分析結果（強み/弱み/改善提案の全パネル）が
+                # そのまま居座り、「エラーなのに結果が出ている」矛盾した画面になる。
+                # 非200エラー時（444行目付近）と同様にここでもクリアする。
+                # URL の query params（result_asset_id/result_version）も、失敗した
+                # この試行を指したまま残さないようクリアする。
                 st.session_state["analysis_result"] = None
                 clear_analysis_result_query_params()
-                add_log(f"❌ エラー内容: {str(e)}")
-                st.error(f"❌ API 呼び出しエラー: {str(e)}")
+                if isinstance(e, requests.exceptions.ConnectionError):
+                    add_log(f"❌ バックエンドAPI（{API_BASE_URL}）に接続できませんでした。")
+                else:
+                    add_log(f"❌ エラー内容: {str(e)}")
+                render_api_exception(e)
         else:
             st.warning("⚠️ ファイルをアップロードしてください")
 
@@ -626,7 +649,7 @@ with tab_saved:
                 ):
                     st.json(err_json if err_json else {"raw_response": response.text})
         except Exception as e:
-            st.error(f"❌ API 呼び出しエラー: {str(e)}")
+            render_api_exception(e)
 
     else:
         # --- 一覧表示 ---
@@ -648,7 +671,7 @@ with tab_saved:
                 else:
                     st.error(f"❌ エラー: {response.status_code}")
             except Exception as e:
-                st.error(f"❌ API 呼び出しエラー: {str(e)}")
+                render_api_exception(e)
 
         # 一覧APIはデフォルトで asset_id ごとの最新版のみを返すが、念のため
         # ループ index は残しておく（unknown フォールバック等での widget key 衝突防止）。
