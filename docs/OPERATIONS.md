@@ -51,6 +51,9 @@ LLM_MODEL=gpt
   ```
 
 ### ローカル起動手順（Windows / .bat、`AIS/` 配下）
+これらは全てローカル専用で、本番（GCP VM）には一切接続しません。本番操作用の
+`AIS_Prod_*.bat` との違いは「9. AIS 運用ツール（Windows）」を参照してください。
+
 手動でコマンドを打つ代わりに、Windows ローカル開発機では以下のバッチファイルが使えます。
 いずれもポートが実際に LISTENING になるまで待ってから次の処理に進むため、
 サーバー起動前にブラウザだけ開いてしまう事故（`ERR_CONNECTION_REFUSED`）や、
@@ -225,45 +228,55 @@ cat /tmp/fastapi.log | grep -iE "llm|openai|validation|error"
 
 ---
 
-## 9. AIS 1クリック運用ツール（Windows）
+## 9. AIS 運用ツール（Windows） - 本番 / ローカル開発の切り分け
 
-本番 GCP VM（`instance-20260626-073827` / `asia-northeast1-a`）上の FastAPI（`ad-insight-fastapi.service`）・Streamlit（`ad-insight-streamlit.service`）を、Windows端末からダブルクリックのみで操作するための最小構成ツールです。SSHは `gcloud compute ssh` の鍵認証をそのまま利用し、新規の鍵・PAT・sudoers設定は追加していません。
+`D:\ClaudeCodeWork\AIS\` には、名前で明確に区別された2系統のツールが置かれています。**`Prod` が付くものだけが本番（GCP VM）を操作します。** それ以外はすべてローカル開発専用で、本番には一切触れません。
 
-### 9.1 配置場所
+| 系統 | ファイル | 対象 |
+|---|---|---|
+| 本番 | `AIS_Prod_Open.bat` / `AIS_Prod_Status.bat` / `AIS_Prod_Restart.bat` | GCP VM上の本番 FastAPI / Streamlit |
+| ローカル開発 | `AIS_Open.bat` / `AIS_Start_All.bat` / `AIS_Stop_All.bat` | 手元PCの `.venv` で動くローカルの FastAPI / Streamlit（「ローカル起動手順（Windows / .bat）」節を参照） |
+
+過去にこの区別が名前上つかない状態（`AIS_Open.bat` 等が本番用途とローカル開発用途のどちらとも取れる）だった時期があり、本ドキュメントの記述と実体が食い違っていました。現在は上記の通り `Prod` 接頭辞で明確に分離しています。
+
+### 9.1 配置場所（本番系統）
 - **Windows側（利用者が操作するファイル）**: `D:\ClaudeCodeWork\AIS\`
-  - `AIS_Open.bat`
-  - `AIS_Status.bat`
-  - `AIS_Restart.bat`
+  - `AIS_Prod_Open.bat`
+  - `AIS_Prod_Status.bat`
+  - `AIS_Prod_Restart.bat`
 - **VM側補助スクリプト（bat から SSH 経由で呼び出す実処理、gitリポジトリ管理外）**: `/home/nario/ais-scripts/`
   - `ais_status.sh`
   - `ais_restart.sh`
 
-### 9.2 各ツールの役割
+本番 GCP VM（`instance-20260626-073827` / `asia-northeast1-a`）上の FastAPI（`ad-insight-fastapi.service`）・Streamlit（`ad-insight-streamlit.service`）を、Windows端末からダブルクリックのみで操作するための最小構成ツールです。SSHは `gcloud compute ssh` の鍵認証をそのまま利用し、新規の鍵・PAT・sudoers設定は追加していません。
+
+### 9.2 各ツールの役割（本番系統）
 
 | ファイル | 役割 | 内部処理 |
 |---|---|---|
-| `AIS_Open.bat` | 本番UI（Streamlit）をブラウザで開く | `start "" "https://campaignpilot.luvira.co.jp"` |
-| `AIS_Status.bat` | 両serviceの状態と `/health` を確認する | SSH経由で `/home/nario/ais-scripts/ais_status.sh` を実行し、`systemctl status ad-insight-fastapi` / `ad-insight-streamlit` と `curl http://127.0.0.1:8000/health` の結果を表示 |
-| `AIS_Restart.bat` | 両serviceを再起動し、直後の状態を確認する | SSH経由で `/home/nario/ais-scripts/ais_restart.sh` を実行し、`systemctl restart` 後に status と `/health` を表示 |
+| `AIS_Prod_Open.bat` | 本番UI（Streamlit）をブラウザで開く | `start "" "https://campaignpilot.luvira.co.jp"`（SSH不要） |
+| `AIS_Prod_Status.bat` | 両serviceの状態と `/health` を確認する（読み取り専用） | SSH経由で `/home/nario/ais-scripts/ais_status.sh` を実行し、`systemctl status ad-insight-fastapi` / `ad-insight-streamlit` と `curl http://127.0.0.1:8000/health` の結果を表示 |
+| `AIS_Prod_Restart.bat` | 両serviceを再起動し、直後の状態を確認する | `YES` の入力による確認プロンプトの後、SSH経由で `/home/nario/ais-scripts/ais_restart.sh` を実行し、`systemctl restart` 後に status と `/health` を表示。本番への実際の瞬断を伴うため、確認なしには実行されない |
 
-補足: 本番の正式アクセスURLは **`https://campaignpilot.luvira.co.jp`**（2026-07-03、Nginx + Let's Encrypt TLSで本番反映済み）。`AIS_Open.bat` も正式URLを開く設定に更新済み（2026-07-03）。`http://34.84.24.83:8501` 等の直アクセス経路は縮小方針が決まるまで引き続き到達可能。なお `34.84.24.83` はGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。Nginx/TLSの適用済み設定・今後の直アクセス縮小検討は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
+補足: 本番の正式アクセスURLは **`https://campaignpilot.luvira.co.jp`**（2026-07-03、Nginx + Let's Encrypt TLSで本番反映済み）。`http://34.84.24.83:8501` 等の直アクセス経路は縮小方針が決まるまで引き続き到達可能。なお `34.84.24.83` はGCP静的外部IP（`ais-prod-static-ip` / `asia-northeast1`）として予約済みのため、VM再起動等でIPが変わることはありません。Nginx/TLSの適用済み設定・今後の直アクセス縮小検討は [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) の「Nginx / ドメイン移行チェックリスト」を参照してください。
 
 ### 9.3 利用手順（平常時）
-1. `AIS_Open.bat` をダブルクリックする
+1. `AIS_Prod_Open.bat` をダブルクリックする
 2. ブラウザでStreamlit UIが開けば作業開始
 
 ### 9.4 障害時の使い分け
-1. UIが開かない・分析が動かない等の異常に気づいたら、まず **`AIS_Status.bat`** をダブルクリックし、以下を確認する
+1. UIが開かない・分析が動かない等の異常に気づいたら、まず **`AIS_Prod_Status.bat`** をダブルクリックし、以下を確認する
    - `ad-insight-fastapi` / `ad-insight-streamlit` がともに `active (running)` か
    - `/health` が `{"status":"healthy",...}` を返しているか
-2. いずれかが異常（`failed` / `activating (auto-restart)` 等）であれば **`AIS_Restart.bat`** をダブルクリックする
+2. いずれかが異常（`failed` / `activating (auto-restart)` 等）であれば **`AIS_Prod_Restart.bat`** をダブルクリックし、確認プロンプトで `YES` と入力する
    - 両serviceを再起動し、そのまま status と `/health` を表示して結果を確認できる
 3. 再起動後も改善しない場合は、本ドキュメント「8. 障害診断の最速フロー」に従い詳細調査を行う（ログ確認、`.env`/systemd設定確認等）。1クリックツールは一次切り分け・簡易復旧用であり、依存関係やコードレベルの問題解決は対象外。
 
 ### 9.5 注意事項
-- どちらの bat も実行結果はウィンドウ内にそのまま表示され、最後にキー入力待ちになるため、閉じる前に内容を確認できる
+- 3つの bat すべて実行結果はウィンドウ内にそのまま表示され、最後にキー入力待ちになるため、閉じる前に内容を確認できる
 - secrets（APIキー等）は bat・VM側スクリプトいずれにも含まれていない
-- `AIS_Restart.bat` は対象2 service（`ad-insight-fastapi`, `ad-insight-streamlit`）以外には影響しない
+- `AIS_Prod_Restart.bat` は対象2 service（`ad-insight-fastapi`, `ad-insight-streamlit`）以外には影響しない
+- ローカル開発用の `AIS_Open.bat` / `AIS_Start_All.bat` / `AIS_Stop_All.bat` を間違って本番復旧のつもりで使わないこと（本番には一切接続しない）。逆に `AIS_Prod_*` をローカル動作確認のつもりで使わないこと（実際に本番へ影響する）
 
 ### 9.6 sudo権限の最小化ポリシー（Phase 2-1）
 
