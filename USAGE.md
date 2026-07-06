@@ -42,6 +42,11 @@ streamlit run frontend/streamlit_app.py
 ```
 ✅ ブラウザが自動的に `http://localhost:8501` で開く
 
+> Windows ローカル開発機では、上記のステップ3・4を手動で行う代わりに
+> `AIS/AIS_Start_All.bat`（backend+frontendをまとめて起動）や
+> `AIS/AIS_Open.bat`（frontendのみ）が使えます。詳細は
+> `docs/OPERATIONS.md` の「ローカル起動手順（Windows / .bat）」を参照してください。
+
 ---
 
 ## 📥 インプット情報（何を与えるか）
