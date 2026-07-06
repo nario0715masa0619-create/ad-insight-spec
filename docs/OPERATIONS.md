@@ -50,6 +50,29 @@ LLM_MODEL=gpt
   streamlit run frontend/streamlit_app.py
   ```
 
+### ローカル起動手順（Windows / .bat、`AIS/` 配下）
+手動でコマンドを打つ代わりに、Windows ローカル開発機では以下のバッチファイルが使えます。
+いずれもポートが実際に LISTENING になるまで待ってから次の処理に進むため、
+サーバー起動前にブラウザだけ開いてしまう事故（`ERR_CONNECTION_REFUSED`）や、
+二重起動での混乱を避けられます。
+
+| やりたいこと | 使うバッチ |
+|---|---|
+| backend + frontend をまとめて起動したい | `AIS_Start_All.bat` |
+| frontend だけ確認したい（backendは手動起動 or 起動済み） | `AIS_Open.bat` |
+| backend / frontend を両方止めたい | `AIS_Stop_All.bat` |
+
+- `AIS_Start_All.bat` は backend（uvicorn, :8000）を起動 → 8000番の待ち受けを確認 →
+  `AIS_Open.bat` を呼び出して frontend（Streamlit, :8501）を起動し、ブラウザを開きます。
+  各ポートが既に LISTENING の場合は多重起動せず既存プロセスを再利用します。
+- backend が起動していない状態で frontend から「分析実行」を行うと、
+  生の例外文字列ではなく「バックエンドAPIに接続できません。バックエンドサーバーが
+  起動しているか確認してください。」という穏当なメッセージが画面に表示されます
+  （画面が崩れたように見える不具合ではありません）。
+- `AIS_Stop_All.bat` は :8000 / :8501 で LISTENING しているプロセスと、
+  対象のバッチが起動したコンソールウィンドウのみを停止します
+  （無関係な python.exe を巻き込んで停止することはありません）。
+
 ### 開発テスト実行
 ```bash
 cd backend
