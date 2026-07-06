@@ -59,6 +59,12 @@ class StrengthItem(BaseModel):
     title: str = Field(..., description="要素名", min_length=3, max_length=60)
     description: str = Field(..., description="何が良いかの具体説明", min_length=10, max_length=200)
     keep_reason: str = Field(..., description="今後も維持・再利用すべき理由", min_length=10, max_length=200)
+    # Optional: 旧データや、LLMが省略した場合でもバリデーション失敗にしないため required にしない。
+    evidence: Optional[str] = Field(
+        default=None,
+        description="分析データのどの部分からこの判断に至ったか（視線誘導/CTA/可読性/差別化/信頼性等の観点を含む短い根拠）",
+        max_length=200,
+    )
 
 
 class WeaknessItem(BaseModel):
@@ -70,6 +76,12 @@ class WeaknessItem(BaseModel):
     title: str = Field(..., description="問題名", min_length=3, max_length=60)
     description: str = Field(..., description="何が問題かの具体説明", min_length=10, max_length=200)
     impact: str = Field(..., description="放置した場合の成果への影響", min_length=10, max_length=200)
+    # Optional: 旧データや、LLMが省略した場合でもバリデーション失敗にしないため required にしない。
+    evidence: Optional[str] = Field(
+        default=None,
+        description="分析データのどの部分からこの判断に至ったか（視線誘導/CTA/可読性/差別化/信頼性等の観点を含む短い根拠）",
+        max_length=200,
+    )
 
 
 class RecommendationItem(BaseModel):
