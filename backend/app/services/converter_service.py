@@ -88,7 +88,7 @@ class ConverterService(BaseService):
             performance = self._populate_performance(kpi_result) if kpi_result else None
             diagnostics = self._populate_diagnostics(llm_result, performance)
             views = self._populate_views(performance, llm_result)
-            metadata_section = self._populate_metadata(mode)
+            metadata_section = self._populate_metadata(mode, llm_result, ocr_result)
             
             # Build complete spec dict
             spec_dict = {
@@ -310,24 +310,53 @@ class ConverterService(BaseService):
             ],
         }
     
-    def _populate_metadata(self, mode: str) -> Dict[str, Any]:
-        """Populate _metadata section"""
+    def _populate_metadata(
+        self,
+        mode: str,
+        llm_result: Dict[str, Any],
+        ocr_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Populate _metadata section
+
+        以前は ai_model_version / validation_notes が常に固定の "mock" 文言
+        だったため、実際に GPT-4o 等で分析が成功していても "mock" と表示され
+        誤解を招いていた。実際の llm_result / ocr_result を反映する。
+        """
+        creative_core_llm = (llm_result or {}).get("creative_core", {}) or {}
+        llm_model = creative_core_llm.get("llm_model")
+        llm_success = creative_core_llm.get("llm_success")
+        llm_error = creative_core_llm.get("llm_error")
+
+        ocr_success = bool((ocr_result or {}).get("success"))
+        ocr_engine = "tesseract" if ocr_success else "tesseract (no text detected / unavailable)"
+
+        validation_notes = []
+        if llm_model:
+            validation_notes.append(f"LLM analysis: {llm_model} ({'success' if llm_success else 'failed'})")
+        else:
+            validation_notes.append("LLM analysis: not executed")
+        if llm_error:
+            validation_notes.append(f"LLM error: {llm_error}")
+        validation_notes.append(f"OCR: {ocr_engine}")
+        if (llm_result or {}).get("decision_support_error"):
+            validation_notes.append("decision_support generation failed (fail-soft, see diagnostics.decision_support_error)")
+        if (llm_result or {}).get("improvements_error"):
+            validation_notes.append("improvements generation failed (fail-soft, see diagnostics.improvements_error)")
+
         return {
             "generated_at": datetime.now().isoformat() + "Z",
             "data_source": "local_file",
-            "ai_model_version": "mock",
+            "ai_model_version": llm_model or "unavailable",
             "json_schema_version": "v0.2",
             "input_mode": mode,
             "analysis_tools_used": {
-                "ocr_engine": "mock",
+                "ocr_engine": ocr_engine,
                 "video_frame_extractor": "ffmpeg",
                 "web_scraper": "beautifulsoup",
             },
+            # 実測値は AnalysisOrchestrator.run() 完了後に上書きされる
             "processing_time_ms": 0,
-            "validation_status": "passed",
-            "validation_notes": [
-                "Mock implementation - all services functioning",
-                "LLM analysis: mock",
-                "OCR: mock",
-            ],
+            "validation_status": "passed" if llm_success else "degraded",
+            "validation_notes": validation_notes,
         }
