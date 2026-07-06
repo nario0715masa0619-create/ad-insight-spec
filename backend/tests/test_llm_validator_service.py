@@ -183,11 +183,49 @@ class TestLLMValidatorService:
 
 
 class TestDecisionSupportValidation:
-    """decision_support（強み・弱み・改善提案）バリデーションテスト"""
+    """decision_support（5軸 × 強み・弱み・改善提案）バリデーションテスト"""
 
     @pytest.fixture
     def validator(self):
         return LLMValidatorService()
+
+    @staticmethod
+    def _make_axis(axis_id: str, axis_label: str = "軸"):
+        return {
+            "axis": axis_id,
+            "axis_label": axis_label,
+            "score": 3,
+            "strength": {
+                "target_element": "ファーストビューのテキスト",
+                "description": "広告文とLPのFVコピーが『成約率2倍』で完全一致している",
+                "reason": "具体的な数字による訴求は信頼されやすいため",
+                "keep_reason": "信頼感とCVRに直結するため今後も維持すべき",
+                "evidence": {
+                    "location": "ファーストビューのテキスト『成約率2倍』",
+                    "viewpoint": "訴求軸",
+                    "evaluation": "具体的な数字訴求で説得力が高い",
+                    "rationale": "OCRテキストと構図から数字訴求の一致を確認",
+                },
+            },
+            "weakness": {
+                "target_element": "動画冒頭0〜3秒のテキスト",
+                "description": "動画冒頭3秒のテキストが抽象的で視聴維持につながっていない",
+                "reason": "冒頭3秒で具体的なペインポイントを提示しないと離脱が増えるため",
+                "impact": "視聴完了率とCTRの両方を下げている",
+                "evidence": {
+                    "location": "動画0〜3秒目",
+                    "viewpoint": "訴求軸",
+                    "evaluation": "ペインポイントへの言及が無く抽象的",
+                    "rationale": "トーン情報の訴求軸がイメージ訴求のみであることを確認",
+                },
+            },
+            "recommendation": {
+                "what": "動画0-3秒にペインポイント訴求のテキストを配置する",
+                "why": "弱み『冒頭フックの抽象さ』を解消するため",
+                "how": "既存クリエイティブとABテストしCTRを比較する",
+                "expected_effect": "CTR改善を見込む",
+            },
+        }
 
     @pytest.fixture
     def valid_data(self):
@@ -197,90 +235,85 @@ class TestDecisionSupportValidation:
                 "decision": "改修推奨",
                 "rationale": "LP整合性は高いが、フックの抽象さが視聴維持率を下げている",
             },
-            "strengths": [
-                {
-                    "id": "s1",
-                    "category": "lp",
-                    "title": "LPとの完全一致",
-                    "description": "広告文とLPのFVコピーが『成約率2倍』で完全一致している",
-                    "keep_reason": "信頼感とCVRに直結するため今後も維持すべき",
-                }
-            ],
-            "weaknesses": [
-                {
-                    "id": "w1",
-                    "priority": "P1",
-                    "category": "message",
-                    "title": "冒頭フックの抽象さ",
-                    "description": "動画冒頭3秒のテキストが抽象的で視聴維持につながっていない",
-                    "impact": "視聴完了率とCTRの両方を下げている",
-                }
-            ],
-            "recommendations": [
-                {
-                    "id": "r1",
-                    "priority": "P1",
-                    "target_weakness_ids": ["w1"],
-                    "title": "冒頭ペインポイント訴求への変更",
-                    "what": "動画0-3秒にペインポイント訴求のテキストを配置する",
-                    "why": "弱み『冒頭フックの抽象さ』を解消するため",
-                    "how": "既存クリエイティブとABテストしCTRを比較する",
-                    "expected_effect": "CTR改善を見込む",
-                }
+            "axes": [
+                self._make_axis("appeal", "訴求軸"),
+                self._make_axis("creative", "クリエイティブ"),
+                self._make_axis("cta", "CTA"),
+                self._make_axis("trust", "信頼"),
+                self._make_axis("target", "ターゲット"),
             ],
         }
 
     def test_valid_decision_support(self, validator, valid_data):
-        """正常な decision_support はそのまま検証を通過する"""
+        """正常な decision_support はそのまま検証を通過する（5軸すべて存在）"""
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, DecisionSupport)
-        assert result.strengths[0].id == "s1"
-        assert result.weaknesses[0].id == "w1"
-        assert result.recommendations[0].target_weakness_ids == ["w1"]
+        assert len(result.axes) == 5
+        assert [a.axis for a in result.axes] == ["appeal", "creative", "cta", "trust", "target"]
 
     def test_missing_required_field(self, validator, valid_data):
-        """summary/strengths/weaknesses/recommendations のいずれか欠落は失敗"""
-        del valid_data["weaknesses"]
+        """summary/axes のいずれか欠落は失敗"""
+        del valid_data["axes"]
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, LLMDecisionSupportValidationError)
         assert result.error_code == "MISSING_FIELD"
 
-    def test_unknown_target_weakness_id_rejected(self, validator, valid_data):
-        """recommendation が実在しない weakness id を参照している場合は失敗"""
-        valid_data["recommendations"][0]["target_weakness_ids"] = ["w999"]
+    def test_missing_axis_rejected(self, validator, valid_data):
+        """5軸のいずれかが欠落している場合は失敗"""
+        valid_data["axes"] = valid_data["axes"][:4]  # target 軸を欠落させる
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, LLMDecisionSupportValidationError)
-        assert "w999" in result.reason
+        assert result.error_code == "AXIS_COVERAGE_INVALID"
+        assert "target" in result.reason
+
+    def test_duplicate_axis_rejected(self, validator, valid_data):
+        """同じ軸が重複している場合は失敗"""
+        valid_data["axes"][4]["axis"] = "appeal"  # target の代わりに appeal を重複させる
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert result.error_code == "AXIS_COVERAGE_INVALID"
+
+    def test_unknown_axis_rejected(self, validator, valid_data):
+        """未知の軸IDは失敗"""
+        valid_data["axes"][0]["axis"] = "unknown_axis"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert result.error_code == "AXIS_COVERAGE_INVALID"
 
     def test_abstract_word_in_weakness_rejected(self, validator, valid_data):
         """weakness の本文に抽象語が含まれる場合は失敗"""
-        valid_data["weaknesses"][0]["title"] = "訴求力が弱い"
+        valid_data["axes"][0]["weakness"]["description"] = "訴求力が弱い説明文です"
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, LLMDecisionSupportValidationError)
 
     def test_abstract_word_in_strength_rejected(self, validator, valid_data):
         """strength の本文に抽象語が含まれる場合は失敗"""
-        valid_data["strengths"][0]["description"] = "全体的に魅力があるビジュアル"
+        valid_data["axes"][0]["strength"]["description"] = "全体的に魅力があるビジュアルです"
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, LLMDecisionSupportValidationError)
 
-    def test_empty_arrays_do_not_crash(self, validator, valid_data):
-        """strengths/weaknesses/recommendations が空でもクラッシュせず成功として扱う"""
-        empty_data = {
-            "summary": valid_data["summary"],
-            "strengths": [],
-            "weaknesses": [],
-            "recommendations": [],
-        }
-        result = validator.validate_decision_support(empty_data)
-        assert isinstance(result, DecisionSupport)
-        assert result.strengths == []
-        assert result.weaknesses == []
-        assert result.recommendations == []
+    def test_recommendation_missing_expected_effect_rejected(self, validator, valid_data):
+        """recommendation に expected_effect が欠落している場合は失敗（What/Why/How/期待効果必須）"""
+        del valid_data["axes"][0]["recommendation"]["expected_effect"]
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
 
-    def test_recommendation_missing_why_rejected(self, validator, valid_data):
-        """recommendation に why が欠落している場合は失敗（What/Why/How必須）"""
-        del valid_data["recommendations"][0]["why"]
+    def test_expected_effect_without_metric_keyword_rejected(self, validator, valid_data):
+        """expected_effect が具体的な指標語を含まない場合は失敗"""
+        valid_data["axes"][0]["recommendation"]["expected_effect"] = "効果が期待できると考えられる"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert "expected_effect" in result.reason
+
+    def test_missing_evidence_field_rejected(self, validator, valid_data):
+        """evidence の4点セット（location/viewpoint/evaluation/rationale）のいずれか欠落は失敗"""
+        del valid_data["axes"][0]["strength"]["evidence"]["rationale"]
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+
+    def test_missing_target_element_rejected(self, validator, valid_data):
+        """target_element（対象要素の特定）が欠落している場合は失敗"""
+        del valid_data["axes"][0]["weakness"]["target_element"]
         result = validator.validate_decision_support(valid_data)
         assert isinstance(result, LLMDecisionSupportValidationError)
 

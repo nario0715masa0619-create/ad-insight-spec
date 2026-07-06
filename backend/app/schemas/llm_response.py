@@ -97,13 +97,107 @@ class RecommendationItem(BaseModel):
     expected_effect: Optional[str] = Field(default=None, description="期待される効果", max_length=150)
 
 
+# ===== 5軸構造化（appeal/creative/cta/trust/target） =====
+# 「抽象的で現場の業務に使えない」という課題への対応として、strengths/weaknesses/recommendations の
+# フラットリストを廃し、固定5軸 × 強み/弱み/改善提案の3点セット必須構造に作り替える。
+# 旧形式（axes なし）で既に保存されているデータは、このモデルへ再構築せず
+# フロントエンドが raw dict のまま従来通り読む（後方互換・データ移行不要）。
+
+EVALUATION_AXES = [
+    ("appeal", "訴求軸"),
+    ("creative", "クリエイティブ"),
+    ("cta", "CTA"),
+    ("trust", "信頼"),
+    ("target", "ターゲット"),
+]
+AXIS_IDS = [axis_id for axis_id, _ in EVALUATION_AXES]
+AXIS_LABELS = dict(EVALUATION_AXES)
+
+
+class Evidence(BaseModel):
+    """判断根拠の4点セット（対象箇所・観点・評価・根拠）を必須とする"""
+
+    location: str = Field(
+        ...,
+        description="対象箇所（テキスト抜粋・動画タイムスタンプ等、後から見返しても位置が分かる形式）",
+        min_length=2,
+        max_length=100,
+    )
+    viewpoint: str = Field(..., description="評価観点（訴求軸/視線誘導/CTA/可読性/差別化/信頼性等）", min_length=2, max_length=40)
+    evaluation: str = Field(..., description="その観点から見た評価", min_length=2, max_length=100)
+    rationale: str = Field(..., description="なぜそう評価するかの根拠", min_length=5, max_length=200)
+
+
+class AxisStrength(BaseModel):
+    """軸ごとの強み: 今後も維持・再利用すべき勝ち要素"""
+
+    target_element: str = Field(
+        ...,
+        description="対象要素の特定（例: ファーストビューのテキスト、動画5〜8秒目、CTAボタン文言等）",
+        min_length=2,
+        max_length=80,
+    )
+    description: str = Field(..., description="何が良いかの具体説明", min_length=10, max_length=200)
+    reason: str = Field(..., description="強みと判断した理由（ユーザー心理・ベストプラクティスの観点）", min_length=10, max_length=200)
+    keep_reason: str = Field(..., description="今後も維持・再利用すべき理由", min_length=10, max_length=200)
+    evidence: Evidence = Field(..., description="判断根拠（対象箇所・観点・評価・根拠の4点セット）")
+
+
+class AxisWeakness(BaseModel):
+    """軸ごとの弱み: 成果の足を引っ張っているボトルネック"""
+
+    target_element: str = Field(..., description="対象要素の特定", min_length=2, max_length=80)
+    description: str = Field(..., description="何が問題かの具体説明", min_length=10, max_length=200)
+    reason: str = Field(..., description="弱みと判断した理由（ユーザー心理・ベストプラクティスの観点）", min_length=10, max_length=200)
+    impact: str = Field(..., description="放置した場合の成果への影響", min_length=10, max_length=200)
+    evidence: Evidence = Field(..., description="判断根拠（対象箇所・観点・評価・根拠の4点セット）")
+
+
+class AxisRecommendation(BaseModel):
+    """軸ごとの改善提案: What / Why / How + 期待効果を必須とする"""
+
+    what: str = Field(..., description="何を変えるか（対象と変更内容を具体的に）", min_length=10, max_length=200)
+    why: str = Field(..., description="なぜ変えるか（対応する弱みへの言及を含む）", min_length=10, max_length=200)
+    how: str = Field(..., description="どう検証するか（簡易な検証方法）", min_length=10, max_length=200)
+    expected_effect: str = Field(
+        ...,
+        description="期待される効果（理解速度向上・CVR改善・CTR向上等、具体的な指標で）",
+        min_length=5,
+        max_length=150,
+    )
+
+
+class AxisBlock(BaseModel):
+    """評価軸1件分（強み・弱み・改善提案の3点セットを必須とする）"""
+
+    axis: str = Field(..., description=f"固定5軸のいずれか: {AXIS_IDS}")
+    axis_label: str = Field(..., description="軸の日本語ラベル")
+    score: int = Field(..., ge=1, le=5, description="この軸の評価スコア（1〜5）")
+    strength: AxisStrength = Field(..., description="この軸の強み")
+    weakness: AxisWeakness = Field(..., description="この軸の弱み")
+    recommendation: AxisRecommendation = Field(..., description="この軸の改善提案")
+
+    @validator("axis")
+    def axis_must_be_known(cls, v):
+        if v not in AXIS_IDS:
+            raise ValueError(f"axis must be one of {AXIS_IDS}, got '{v}'")
+        return v
+
+
 class DecisionSupport(BaseModel):
-    """意思決定支援ブロック（強み・弱み・改善提案）"""
+    """意思決定支援ブロック（5軸 × 強み・弱み・改善提案）"""
 
     summary: DecisionSupportSummary = Field(..., description="結論サマリー")
-    strengths: List[StrengthItem] = Field(default=[], description="強み（維持・再利用すべき勝ち要素）")
-    weaknesses: List[WeaknessItem] = Field(default=[], description="弱み（ボトルネック）")
-    recommendations: List[RecommendationItem] = Field(default=[], description="改善提案（What/Why/How必須）")
+    axes: List[AxisBlock] = Field(..., description="5軸の評価（appeal/creative/cta/trust/target）", min_items=5, max_items=5)
+    # overall_score/overall_rank は LLM 出力を信頼せず、validator 通過後に llm_service 側で
+    # axes のスコア平均から算出してセットする（生成時点では未設定 = None）。
+    overall_score: Optional[float] = Field(default=None, description="総合スコア（軸スコア平均、Python側で算出）")
+    overall_rank: Optional[str] = Field(default=None, description="総合ランク A/B/C/D（Python側で算出）")
+
+    # [非推奨・後方互換用] axes 導入前の旧形式データ用フィールド。新規生成では使用しない。
+    strengths: List[StrengthItem] = Field(default=[], description="[非推奨] 旧形式の強みリスト")
+    weaknesses: List[WeaknessItem] = Field(default=[], description="[非推奨] 旧形式の弱みリスト")
+    recommendations: List[RecommendationItem] = Field(default=[], description="[非推奨] 旧形式の改善提案リスト")
 
 
 class LLMDecisionSupportValidationError(BaseModel):

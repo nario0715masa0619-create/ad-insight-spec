@@ -143,7 +143,7 @@ class ConverterService(BaseService):
         """Populate asset_meta section"""
         return {
             "asset_id": metadata_result.get("asset_id", "unknown"),
-            "asset_name": None,
+            "asset_name": metadata_result.get("asset_name"),
             "platform": "unknown",
             "ad_account_id": None,
             "campaign_name": None,
