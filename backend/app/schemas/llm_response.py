@@ -243,6 +243,53 @@ class LLMResponseSchema(BaseModel):
     creative_core: Optional[CreativeCoreSchema] = Field(default=None, description="CreativeCore 分析結果")
     retry_count: int = Field(default=0, ge=0, le=3)
     error_details: Optional[str] = Field(default=None, description="エラー時の詳細")
-    
+
     class Config:
         strict = True
+
+
+# ===== カット別分析（video_cuts）用スキーマ =====
+# 動画をシーン切り替え目安で分割した「カット」ごとに、役割・要約・強み or
+# 問題点・改善提案を構造化するブロック。カットの時間範囲はバックエンド
+# （VideoService.detect_cuts）側で確定済みのため、LLMには再生成させず
+# cut_id で紐付けるだけにする（出力項目を絞り、精度とレイテンシを稼ぐ）。
+
+class VideoCutContent(BaseModel):
+    """
+    1カット分の分析結果。
+
+    cut_id/role_tag/summary/strength_or_issue/improvement_suggestion/evidence
+    はLLM生成。start_seconds/end_secondsはLLMには生成させず（バックエンドの
+    VideoService.detect_cutsで確定済み）、validate_video_cuts通過後にオーケ
+    ストレーター側でcut_idを突き合わせてマージする。
+    """
+
+    cut_id: str = Field(..., description="バックエンド側で採番済みのカットID（例: cut_1）と一致必須")
+    start_seconds: Optional[float] = Field(default=None, description="カット開始秒（バックエンドでマージ）")
+    end_seconds: Optional[float] = Field(default=None, description="カット終了秒（バックエンドでマージ）")
+    role_tag: str = Field(
+        ...,
+        description="このカットの役割（例: Hook/ベネフィット提示/証拠/信頼/CTA 等。自由記述）",
+        min_length=1,
+        max_length=20,
+    )
+    summary: str = Field(..., description="画面内容の短い要約", min_length=5, max_length=150)
+    strength_or_issue: str = Field(..., description="このカットの強みまたは問題点（1〜2行）", min_length=5, max_length=200)
+    improvement_suggestion: str = Field(..., description="具体的な改善提案（1〜2行）", min_length=5, max_length=200)
+    evidence: Optional[str] = Field(
+        default=None, description="簡単な根拠（なぜそう判断したか）", max_length=150
+    )
+
+
+class VideoCutAnalysis(BaseModel):
+    """カット別分析ブロック（動画のみ、画像では生成しない）"""
+
+    cuts: List[VideoCutContent] = Field(..., description="カットごとの分析結果")
+
+
+class LLMVideoCutAnalysisValidationError(BaseModel):
+    """video_cuts 生成時のバリデーションエラー（fail-soft）"""
+
+    success: bool = False
+    error_code: str = Field(..., description="エラーコード")
+    reason: str = Field(..., description="エラー理由")

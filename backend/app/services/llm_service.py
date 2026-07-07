@@ -2,6 +2,7 @@ import os
 import json
 import re
 import time
+import base64
 from typing import Optional, Literal
 from dotenv import load_dotenv
 import httpx
@@ -19,6 +20,8 @@ from app.schemas.llm_response import (
     DecisionSupport,
     LLMDecisionSupportValidationError,
     EVALUATION_AXES,
+    VideoCutAnalysis,
+    LLMVideoCutAnalysisValidationError,
 )
 from app.services.llm_validator_service import LLMValidatorService
 
@@ -37,6 +40,7 @@ class LLMService:
     # タイムアウトを引き起こさないための上限）。
     DECISION_SUPPORT_TIME_BUDGET_SECONDS = 50
     IMPROVEMENTS_TIME_BUDGET_SECONDS = 30
+    VIDEO_CUTS_TIME_BUDGET_SECONDS = 50
     
     # 共通プロンプト（JSON Schema 固定）
     ANALYSIS_PROMPT_TEMPLATE = """
@@ -690,4 +694,232 @@ class LLMService:
             success=False,
             error_code="MAX_RETRIES_EXCEEDED",
             reason=f"Failed to generate valid decision support after {LLMService.MAX_RETRIES} attempts"
+        )
+
+    # ===== カット別分析（video_cuts）生成 =====
+    # decision_support/improvements と異なり、この呼び出しだけは実際の代表
+    # フレーム画像をVision APIに添付する（他の分析はテキストのみで、
+    # 「画面内容」の記述は実質推測になっているため、カット別分析では
+    # 実際の画面を根拠にした具体性を優先する）。
+
+    VIDEO_CUT_ANALYSIS_PROMPT = """
+あなたは広告クリエイティブの動画カット分析を行う専門家です。
+添付された画像は、この動画を複数のカット（ショット）に分割した際の、
+各カットの代表フレームです（画像は下記リストの順序で対応しています）。
+
+【各カットの情報】
+{cut_info}
+
+【必須ルール】
+1. 添付された実際の画像を見て判断すること。画像から読み取れない内容を想像や一般論で埋めない。
+2. role_tag は、そのカットに最も当てはまる役割を書く（例: Hook / ベネフィット提示 / 証拠・信頼形成 / CTA / その他。自由記述でよい）。
+3. summary は画面に実際に映っている内容を具体的に書く（人物・商品・テキスト・構図など、1〜2文）。
+4. strength_or_issue は、そのカットの強み、または問題点のどちらかを1〜2行で具体的に書く。
+5. improvement_suggestion は、そのカットに対する具体的な改善提案を1〜2行で書く（そのまま制作指示に使える粒度で）。
+6. evidence は、判断の簡単な根拠を1文で書く（画面のどの部分から読み取ったか。省略可）。
+7. 次の抽象語を使用禁止: 改善余地・訴求力・魅力・分かりやすさ・インパクト・工夫・仕掛け・チカラ・違和感
+8. cut_id は与えられたIDをそのまま使う（新しいIDを作らない。全カット分を過不足なく出力する）。
+
+【JSON出力フォーマット（必須・これ以外の説明文は一切含めない）】
+{{
+    "cuts": [
+        {{
+            "cut_id": "cut_1",
+            "role_tag": "Hook",
+            "summary": "画面に映っている具体的な内容",
+            "strength_or_issue": "強みまたは問題点",
+            "improvement_suggestion": "具体的な改善提案",
+            "evidence": "判断の根拠"
+        }}
+    ]
+}}
+"""
+
+    @staticmethod
+    def analyze_video_cuts(
+        video_cuts: list,
+        model: str = "gpt"
+    ) -> Union[VideoCutAnalysis, LLMVideoCutAnalysisValidationError]:
+        """
+        動画のカットごとに、代表フレーム画像を実際にVision APIへ送って
+        役割・要約・強み/問題点・改善提案を生成する（再試行・バリデーション対応）。
+
+        Args:
+            video_cuts: [{"cut_id": str, "start_seconds": float, "end_seconds": float,
+                          "frame_path": str, "ocr_text": str}, ...]
+                        （時間範囲・代表フレームはバックエンド側で確定済み。
+                        LLMには時間範囲を再生成させない）
+            model: "gpt"（Vision対応） または "gemini"
+
+        既存の improvements/decision_support とは独立した呼び出しであり、
+        本メソッドの失敗は他の診断結果には影響しない（fail-soft）。
+        """
+        if not video_cuts:
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="NO_CUTS",
+                reason="No video cuts to analyze"
+            )
+
+        from app.config import get_settings
+        settings = get_settings()
+        openai_api_key = settings.OPENAI_API_KEY
+        if not openai_api_key and model == "gpt":
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="API_KEY_MISSING",
+                reason="OPENAI_API_KEY is not configured"
+            )
+
+        known_cut_ids = [c["cut_id"] for c in video_cuts]
+
+        # フレーム画像を base64 エンコード（読み込めないフレームはスキップし、
+        # 該当カットはLLMに送らない＝バリデーションの known_cut_ids からも除外）
+        encoded_frames = []
+        for cut in video_cuts:
+            frame_path = cut.get("frame_path")
+            if not frame_path:
+                continue
+            try:
+                with open(frame_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                encoded_frames.append((cut, b64))
+            except Exception as e:
+                logger.warning(f"Failed to read cut frame {frame_path}: {str(e)}")
+
+        if not encoded_frames:
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="NO_FRAMES",
+                reason="No cut frames could be read for analysis"
+            )
+        known_cut_ids = [cut["cut_id"] for cut, _ in encoded_frames]
+
+        cut_info_lines = []
+        for cut, _ in encoded_frames:
+            ocr_text = cut.get("ocr_text") or "（テキストなし）"
+            cut_info_lines.append(
+                f"- {cut['cut_id']}（{cut['start_seconds']:.1f}〜{cut['end_seconds']:.1f}秒）"
+                f" 画面内OCRテキスト: {ocr_text}"
+            )
+        cut_info = "\n".join(cut_info_lines)
+
+        previous_feedback = ""
+        last_result: Union[VideoCutAnalysis, LLMVideoCutAnalysisValidationError, None] = None
+        retry_start_time = time.time()
+
+        for attempt in range(LLMService.MAX_RETRIES):
+            elapsed = time.time() - retry_start_time
+            if attempt > 0 and elapsed > LLMService.VIDEO_CUTS_TIME_BUDGET_SECONDS:
+                logger.warning(
+                    f"Video cuts time budget exceeded after attempt {attempt} "
+                    f"({elapsed:.1f}s > {LLMService.VIDEO_CUTS_TIME_BUDGET_SECONDS}s); stopping retries"
+                )
+                return last_result or LLMVideoCutAnalysisValidationError(
+                    success=False,
+                    error_code="TIME_BUDGET_EXCEEDED",
+                    reason=f"Stopped retrying after {attempt} attempt(s) to stay within the time budget"
+                )
+
+            prompt_text = LLMService.VIDEO_CUT_ANALYSIS_PROMPT.format(cut_info=cut_info) + previous_feedback
+
+            try:
+                if model == "gpt":
+                    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+                    http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
+                    client = openai.OpenAI(api_key=openai_api_key, http_client=http_client)
+
+                    content = [{"type": "text", "text": prompt_text}]
+                    for cut, b64 in encoded_frames:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "low"},
+                        })
+
+                    response = client.chat.completions.create(
+                        model=LLMService.GPT_MODEL,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert ad creative video analyst. Return only valid JSON."
+                            },
+                            {"role": "user", "content": content}
+                        ],
+                        temperature=0.7,
+                        max_tokens=3000
+                    )
+                    response_text = response.choices[0].message.content
+                else:  # gemini
+                    import PIL.Image
+                    model_obj = genai.GenerativeModel(LLMService.GEMINI_MODEL)
+                    parts = [prompt_text]
+                    for cut, _ in encoded_frames:
+                        parts.append(PIL.Image.open(cut["frame_path"]))
+                    response = model_obj.generate_content(parts)
+                    response_text = response.text
+
+                json_text = response_text.strip()
+                if "```json" in json_text:
+                    json_start = json_text.find("```json") + 7
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+                elif "```" in json_text:
+                    json_start = json_text.find("```") + 3
+                    json_end = json_text.find("```", json_start)
+                    json_text = json_text[json_start:json_end].strip()
+
+                data = json.loads(json_text)
+
+                validator = LLMValidatorService()
+                video_cut_analysis = validator.validate_video_cuts(data, known_cut_ids)
+
+                if isinstance(video_cut_analysis, VideoCutAnalysis):
+                    logger.info(f"Video cut analysis generated successfully (attempt {attempt + 1})")
+                    return video_cut_analysis
+                else:
+                    logger.warning(
+                        f"Video cut analysis validation failed (attempt {attempt + 1}): {video_cut_analysis.reason}"
+                    )
+                    last_result = video_cut_analysis
+                    previous_feedback = (
+                        "\n【前回の出力が却下された理由（同じ間違いを繰り返さないこと）】\n"
+                        f"{video_cut_analysis.reason}\n"
+                    )
+                    if attempt < LLMService.MAX_RETRIES - 1:
+                        continue
+                    else:
+                        return video_cut_analysis
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Video cut analysis JSON parse error (attempt {attempt + 1}): {str(e)}")
+                last_result = LLMVideoCutAnalysisValidationError(
+                    success=False,
+                    error_code="JSON_PARSE_ERROR",
+                    reason=f"Failed to parse LLM response as JSON: {str(e)}"
+                )
+                previous_feedback = (
+                    "\n【前回の出力が却下された理由（同じ間違いを繰り返さないこと）】\n"
+                    "有効なJSONとしてパースできませんでした。JSON以外の説明文を含めず、"
+                    "指定されたフォーマットのJSONのみを出力してください。\n"
+                )
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return last_result
+
+            except Exception as e:
+                logger.error(f"Video cut analysis LLM error (attempt {attempt + 1}): {str(e)}")
+                if attempt < LLMService.MAX_RETRIES - 1:
+                    continue
+                else:
+                    return LLMVideoCutAnalysisValidationError(
+                        success=False,
+                        error_code="LLM_ERROR",
+                        reason=f"LLM generation failed: {str(e)}"
+                    )
+
+        return LLMVideoCutAnalysisValidationError(
+            success=False,
+            error_code="MAX_RETRIES_EXCEEDED",
+            reason=f"Failed to generate valid video cut analysis after {LLMService.MAX_RETRIES} attempts"
         )

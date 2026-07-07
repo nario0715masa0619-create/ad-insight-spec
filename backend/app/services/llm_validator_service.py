@@ -9,6 +9,9 @@ from app.schemas.llm_response import (
     AxisBlock,
     AXIS_IDS,
     LLMDecisionSupportValidationError,
+    VideoCutContent,
+    VideoCutAnalysis,
+    LLMVideoCutAnalysisValidationError,
 )
 import logging
 
@@ -291,3 +294,90 @@ class LLMValidatorService:
             summary=summary,
             axes=ordered_axes,
         )
+
+    # ===== カット別分析（video_cuts）バリデーション =====
+
+    def validate_video_cuts(
+        self,
+        data: Dict[str, Any],
+        known_cut_ids: List[str],
+    ) -> Union[VideoCutAnalysis, LLMVideoCutAnalysisValidationError]:
+        """
+        video_cuts（カット別分析）をバリデーション
+
+        - "cuts" の必須構造を確認
+        - known_cut_ids（バックエンド側で確定済みのカットID）を過不足・重複
+          なくカバーしているか確認（validate_decision_support の軸カバレッジ
+          チェックと同じロジック）
+        - 各カットを Pydantic モデル（VideoCutContent）で検証
+        - summary/strength_or_issue/improvement_suggestion に抽象語が
+          含まれないか検査
+        """
+        if not isinstance(data, dict):
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="INVALID_STRUCTURE",
+                reason="Response is not a dictionary"
+            )
+
+        if "cuts" not in data:
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="MISSING_FIELD",
+                reason="'cuts' field is required"
+            )
+
+        cuts_data = data.get("cuts", [])
+        if not isinstance(cuts_data, list):
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="INVALID_LIST_TYPE",
+                reason="'cuts' must be a list"
+            )
+
+        cut_ids_seen = [item.get("cut_id") for item in cuts_data if isinstance(item, dict)]
+        missing_cuts = [c for c in known_cut_ids if c not in cut_ids_seen]
+        unknown_cuts = [c for c in cut_ids_seen if c not in known_cut_ids]
+        duplicate_cuts = [c for c in known_cut_ids if cut_ids_seen.count(c) > 1]
+        if missing_cuts or unknown_cuts or duplicate_cuts:
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="CUT_COVERAGE_INVALID",
+                reason=(
+                    f"cuts must cover exactly {known_cut_ids} once each; "
+                    f"missing={missing_cuts}, unknown={unknown_cuts}, duplicate={duplicate_cuts}"
+                )
+            )
+
+        errors: List[str] = []
+        cuts: List[VideoCutContent] = []
+        for idx, item in enumerate(cuts_data):
+            cut_id = item.get("cut_id") if isinstance(item, dict) else None
+            try:
+                cut = VideoCutContent(**item)
+            except Exception as e:
+                errors.append(f"cut {cut_id or idx}: {str(e)}")
+                continue
+
+            abstract_found = [
+                w for w in self.ABSTRACT_WORDS
+                if w in cut.summary or w in cut.strength_or_issue or w in cut.improvement_suggestion
+            ]
+            if abstract_found:
+                errors.append(f"cut {cut.cut_id}: contains abstract words {abstract_found}")
+                continue
+
+            cuts.append(cut)
+
+        if errors:
+            return LLMVideoCutAnalysisValidationError(
+                success=False,
+                error_code="ITEM_VALIDATION_FAILED",
+                reason="; ".join(errors[:3])
+            )
+
+        # known_cut_ids の順に並べ替え、フロント側での表示順を安定させる
+        cuts_by_id = {c.cut_id: c for c in cuts}
+        ordered_cuts = [cuts_by_id[cid] for cid in known_cut_ids]
+
+        return VideoCutAnalysis(cuts=ordered_cuts)

@@ -367,6 +367,105 @@ class VideoService(BaseService):
                 raise
             raise ProcessingError(f"Frame extraction failed: {str(e)}")
     
+    # ===== カット別分析（video cut analysis）用: シーン切り替え検出・代表フレーム抽出 =====
+
+    # 検出したシーン切り替え候補のうち、この秒数未満の間隔にあるものは
+    # 同一カットの誤検出とみなしてマージする。
+    CUT_MERGE_GAP_SECONDS = 0.8
+    # コスト・レイテンシ抑制のため、1本の動画あたりのカット数上限。
+    MAX_CUTS = 8
+
+    def detect_cuts(self, video_path: str, duration: float) -> List[tuple]:
+        """
+        シーン切り替え・構図変化を目安にした「ざっくりしたカット単位」で
+        動画を分割する（フレーム単位の厳密なショット検出ではない）。
+
+        Args:
+            video_path: 動画ファイルパス
+            duration: 動画の長さ（秒）。0以下の場合は分割しない。
+
+        Returns:
+            list[tuple[float, float]]: (start_seconds, end_seconds) のリスト。
+            シーン切り替えがほぼ検出できない動画（静止画に近い等）では
+            3分割（Hook/Body/CTA相当）にフォールバックする。
+        """
+        if duration <= 0:
+            return []
+
+        try:
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vf', "select='gt(scene,0.4)',showinfo",
+                '-f', 'null',
+                '-'
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            timestamps = [float(m) for m in re.findall(r'pts_time:([0-9.]+)', result.stderr)]
+        except subprocess.TimeoutExpired:
+            self.logger.warning("Scene detection timeout, falling back to even split")
+            timestamps = []
+        except Exception as e:
+            self.logger.warning(f"Scene detection failed: {str(e)}, falling back to even split")
+            timestamps = []
+
+        # 近接した検出点をマージ
+        merged = []
+        for t in sorted(timestamps):
+            if not merged or t - merged[-1] >= self.CUT_MERGE_GAP_SECONDS:
+                merged.append(t)
+
+        boundaries = [0.0] + [t for t in merged if 0.0 < t < duration] + [duration]
+        boundaries = sorted(set(boundaries))
+
+        # 検出点が少なすぎる（実質フラットな動画）場合は3分割にフォールバック
+        if len(boundaries) < 3:
+            boundaries = [0.0, duration / 3, duration * 2 / 3, duration]
+
+        # カット数上限を超える場合は末尾から間引いてマージ
+        while len(boundaries) - 1 > self.MAX_CUTS:
+            # 最も近接した境界同士を1つ間引く
+            gaps = [boundaries[i + 1] - boundaries[i] for i in range(len(boundaries) - 1)]
+            min_idx = gaps.index(min(gaps))
+            del boundaries[min_idx + 1]
+
+        return [(boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)]
+
+    def extract_cut_frame(self, video_path: str, timestamp: float) -> Optional[str]:
+        """
+        指定タイムスタンプの代表フレームを1枚抽出する。
+
+        Args:
+            video_path: 動画ファイルパス
+            timestamp: 抽出位置（秒）
+
+        Returns:
+            抽出したフレームのファイルパス。失敗時は None（fail-soft、
+            該当カットをスキップできるよう例外を投げない）。
+        """
+        if self.temp_dir is None:
+            self.temp_dir = tempfile.mkdtemp(prefix="ad_insight_video_")
+
+        output_path = str(Path(self.temp_dir) / f"cut_frame_{timestamp:.2f}.{self.output_format}")
+        try:
+            cmd = [
+                'ffmpeg',
+                '-ss', str(timestamp),
+                '-i', video_path,
+                '-frames:v', '1',
+                '-q:v', '2',
+                '-y',
+                output_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0 or not Path(output_path).exists():
+                self.logger.warning(f"Cut frame extraction failed at {timestamp}s: {result.stderr[-300:]}")
+                return None
+            return output_path
+        except Exception as e:
+            self.logger.warning(f"Cut frame extraction error at {timestamp}s: {str(e)}")
+            return None
+
     def cleanup(self):
         """Clean up temporary files"""
         if self.temp_dir:
