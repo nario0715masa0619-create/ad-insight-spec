@@ -2,21 +2,118 @@ import streamlit as st
 import requests
 import json
 import os
+import threading
+import time
 from datetime import datetime
 
 
 def render_api_exception(e: Exception):
-    # requests.exceptions.ConnectionError（backend未起動・落ちている等）は、
-    # 生の urllib3 スタックトレース文字列をそのまま出すとユーザーには「壊れた」
-    # ように見えるため、原因が分かる穏当なメッセージに差し替える。
-    # それ以外の例外は従来通り str(e) を出して調査可能にする。
-    if isinstance(e, requests.exceptions.ConnectionError):
+    # requests.exceptions.ConnectionError（backend未起動・落ちている等）や
+    # Timeout（サーバー処理が長引いている等）は、生の urllib3 スタックトレース
+    # 文字列をそのまま出すとユーザーには「壊れた」ように見えるため、原因と
+    # 次のアクションが分かる穏当なメッセージに差し替える。
+    # 注意: requests.exceptions.ConnectTimeout は Timeout と ConnectionError の
+    # 両方を継承しているため、Timeout の判定を ConnectionError より先に行う。
+    if isinstance(e, requests.exceptions.Timeout):
+        st.error("⏱️ タイムアウトしました。サーバーからの応答に時間がかかりすぎています。")
+        st.write("**次のアクション**: もう一度お試しください。繰り返し発生する場合は、ファイルサイズやサーバーの状態をご確認ください。")
+    elif isinstance(e, requests.exceptions.ConnectionError):
         st.error(
             f"❌ バックエンドAPI（{API_BASE_URL}）に接続できません。"
             "バックエンドサーバーが起動しているか確認してください。"
         )
     else:
         st.error(f"❌ API 呼び出しエラー: {str(e)}")
+
+
+# ===== 分析実行中の進捗表示 =====
+# バックエンドの /analyze は単一の同期APIで、内部の各処理ステップ（OCR/LLM等）の
+# 実況はサーバー側から取得できない。そのため、リクエストはバックグラウンド
+# スレッドで実行し、メインスレッド側は経過時間をもとにした見込みステップを
+# 一定間隔で描画し続けることで「止まっているように見える」問題を解消する。
+# ステップの厳密な完了検知ではなく、体感的な進行表示であることに注意。
+ANALYZE_PROGRESS_STEPS = [
+    "ファイルアップロード完了",
+    "API送信中…",
+    "サーバーで解析中…",
+    "AIが5軸を分析中…",
+    "結果を表示中…",
+]
+# 各ステップに到達したとみなす経過秒数の目安（実測値ベースの経験則）
+ANALYZE_PROGRESS_THRESHOLDS = [0, 0, 2, 8]
+ANALYZE_TIMEOUT_SECONDS = 60
+
+
+def run_analyze_with_progress(files: dict, data: dict):
+    """
+    /analyze へのリクエストをバックグラウンドスレッドで実行しつつ、
+    メインスレッド側でステップ進行・経過時間・プログレスバーを更新し続ける。
+
+    Streamlit の st.* 呼び出しはメインスレッドからのみ行う必要があるため、
+    バックグラウンドスレッドは requests.post の実行と結果の受け渡しのみ行う。
+
+    Returns:
+        (response, exception): 成功時は (Response, None)、例外時は (None, Exception)
+    """
+    result = {"response": None, "exception": None}
+
+    def _worker():
+        try:
+            result["response"] = requests.post(
+                f"{API_BASE_URL}/analyze", files=files, data=data, timeout=ANALYZE_TIMEOUT_SECONDS
+            )
+        except Exception as e:
+            result["exception"] = e
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    status_area = st.empty()
+    progress_bar = st.progress(0)
+    elapsed_area = st.empty()
+
+    start_time = time.time()
+    thread.start()
+    while thread.is_alive():
+        elapsed = time.time() - start_time
+
+        current_step = 0
+        for i, threshold in enumerate(ANALYZE_PROGRESS_THRESHOLDS):
+            if elapsed >= threshold:
+                current_step = i
+        lines = []
+        for i, step_label in enumerate(ANALYZE_PROGRESS_STEPS[:-1]):
+            if i < current_step:
+                lines.append(f"✅ {step_label}")
+            elif i == current_step:
+                lines.append(f"▶️ **{step_label}**")
+            else:
+                lines.append(f"⬜ {step_label}")
+        status_area.markdown("\n\n".join(lines))
+
+        # 正確な割合は取得できないため、経過時間から漸近的に近づける
+        # （100%には到達させず、処理中であることが視覚的に分かる程度で十分）
+        progress_bar.progress(min(0.92, elapsed / 45))
+
+        if elapsed > ANALYZE_TIMEOUT_SECONDS:
+            elapsed_area.warning(f"⏳ 経過時間: {int(elapsed)}秒 - 通常より時間がかかっていますが、処理は継続中です")
+        else:
+            elapsed_area.caption(f"⏳ 経過時間: {int(elapsed)}秒")
+
+        time.sleep(0.5)
+
+    thread.join()
+
+    if result["exception"] is None:
+        status_area.markdown(
+            "\n\n".join(f"✅ {s}" for s in ANALYZE_PROGRESS_STEPS)
+        )
+        progress_bar.progress(1.0)
+        elapsed_area.caption(f"⏳ 経過時間: {int(time.time() - start_time)}秒")
+    else:
+        status_area.empty()
+        progress_bar.empty()
+        elapsed_area.empty()
+
+    return result["response"], result["exception"]
 
 
 def widget_key(tab: str, action: str, entity_id=None, idx=None) -> str:
@@ -685,84 +782,63 @@ with tab_new:
 
     if st.button("🚀 分析実行", disabled=bool(missing_items), key=widget_key("analyze", "submit")):
         if uploaded_file:
-            st.info("🔄 分析中...")
+            files = {"input_file": uploaded_file}
+            if lp_file_upload:
+                files["lp_file"] = lp_file_upload
+            if kpi_file_upload:
+                files["kpi_file"] = kpi_file_upload
+            data = {"mode": mode}
+            if asset_name_input:
+                data["asset_name"] = asset_name_input
 
-            log_container = st.container()
-            with log_container:
-                st.write("📋 処理ログ：")
-                log_output = st.empty()
-                logs = []
+            response, exception = run_analyze_with_progress(files, data)
 
-                def add_log(msg):
-                    logs.append(f"- {msg}")
-                    log_output.write("\n".join(logs))
-
-                add_log("📤 API にファイルを送信中...")
-                add_log("⏳ サーバーで処理中...（最大60秒）")
-
-            try:
-                files = {"input_file": uploaded_file}
-                if lp_file_upload:
-                    files["lp_file"] = lp_file_upload
-                if kpi_file_upload:
-                    files["kpi_file"] = kpi_file_upload
-                data = {"mode": mode}
-                if asset_name_input:
-                    data["asset_name"] = asset_name_input
-                response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=60)
-
-                if response.status_code == 200:
-                    add_log("✅ 分析完了")
-                    result = response.json()
-                    st.session_state["analysis_result"] = result
-                    # 「保存済み結果」タブへ移動した場合でも、直近に分析したこの
-                    # asset/version が selected として引き継がれるようにする。
-                    result_id = result.get("asset_meta", {}).get("asset_id")
-                    result_version = result.get("version")
-                    st.session_state["selected_asset_id"] = result_id
-                    st.session_state["selected_version"] = result_version
-                    # ページリロード等でセッションが失われても復元できるよう、
-                    # URLにも同じ asset_id/version を残しておく。
-                    set_analysis_result_query_params(result_id, result_version)
-                else:
-                    add_log(f"❌ エラー: {response.status_code}")
-                    try:
-                        err_json = response.json()
-                    except Exception:
-                        err_json = None
-
-                    st.session_state["analysis_result"] = None
-                    clear_analysis_result_query_params()
-
-                    if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
-                        st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
-                        st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
-                    elif err_json:
-                        st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
-                        st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")
-                    else:
-                        st.error(f"❌ 分析中にエラーが発生しました（HTTP {response.status_code}）")
-
-                    with st.expander(
-                        "🔧 エラー詳細（デバッグ用）",
-                        expanded=False,
-                        key=widget_key("analyze", "expander_error_detail"),
-                    ):
-                        st.json(err_json if err_json else {"raw_response": response.text})
-            except Exception as e:
-                # 前回成功時の analysis_result が残ったままだと、今回の接続エラー
-                # メッセージの下に古い分析結果（強み/弱み/改善提案の全パネル）が
+            if exception is not None:
+                # 前回成功時の analysis_result が残ったままだと、今回のエラー
+                # メッセージの下に古い分析結果（5軸診断の全パネル）が
                 # そのまま居座り、「エラーなのに結果が出ている」矛盾した画面になる。
-                # 非200エラー時（444行目付近）と同様にここでもクリアする。
                 # URL の query params（result_asset_id/result_version）も、失敗した
                 # この試行を指したまま残さないようクリアする。
                 st.session_state["analysis_result"] = None
                 clear_analysis_result_query_params()
-                if isinstance(e, requests.exceptions.ConnectionError):
-                    add_log(f"❌ バックエンドAPI（{API_BASE_URL}）に接続できませんでした。")
+                render_api_exception(exception)
+            elif response.status_code == 200:
+                st.success("✅ 分析完了")
+                result = response.json()
+                st.session_state["analysis_result"] = result
+                # 「保存済み結果」タブへ移動した場合でも、直近に分析したこの
+                # asset/version が selected として引き継がれるようにする。
+                result_id = result.get("asset_meta", {}).get("asset_id")
+                result_version = result.get("version")
+                st.session_state["selected_asset_id"] = result_id
+                st.session_state["selected_version"] = result_version
+                # ページリロード等でセッションが失われても復元できるよう、
+                # URLにも同じ asset_id/version を残しておく。
+                set_analysis_result_query_params(result_id, result_version)
+            else:
+                try:
+                    err_json = response.json()
+                except Exception:
+                    err_json = None
+
+                st.session_state["analysis_result"] = None
+                clear_analysis_result_query_params()
+
+                if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
+                    st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
+                    st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
+                elif err_json:
+                    st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
+                    st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")
                 else:
-                    add_log(f"❌ エラー内容: {str(e)}")
-                render_api_exception(e)
+                    st.error(f"❌ 分析中にエラーが発生しました（HTTP {response.status_code}）")
+
+                with st.expander(
+                    "🔧 エラー詳細（デバッグ用）",
+                    expanded=False,
+                    key=widget_key("analyze", "expander_error_detail"),
+                ):
+                    st.json(err_json if err_json else {"raw_response": response.text})
         else:
             st.warning("⚠️ ファイルをアップロードしてください")
 
