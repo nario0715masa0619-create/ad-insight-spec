@@ -270,36 +270,64 @@ def score_stars(score) -> str:
 
 
 def render_overall_score_card(decision_support: dict):
-    """axes形式の decision_support の結論サマリー（総合ランク/スコア付き）"""
+    """
+    axes形式の decision_support の結論サマリー。
+
+    読む順序を明確にするため、上から
+    1. 結論（短い見出し）
+    2. 短い補足説明（1〜2文）
+    3. 総合ランク / 総合スコア / 判断（余白を取ったサマリーカード）
+    の順で表示する。st.columns は狭い画面幅では自動的に縦積みになる。
+    """
     summary = decision_support.get("summary", {}) or {}
     headline = summary.get("headline") or "結論サマリー"
     decision = summary.get("decision")
     rationale = summary.get("rationale")
     overall_rank = decision_support.get("overall_rank")
     overall_score = decision_support.get("overall_score")
+
     with st.container(border=True):
-        st.markdown(f"## 🧭 {headline}")
-        cols = st.columns([1, 1, 2])
-        with cols[0]:
-            st.metric("総合ランク", rank_badge(overall_rank))
-        with cols[1]:
-            st.metric("総合スコア", f"{overall_score:.1f} / 5" if overall_score is not None else "—")
-        with cols[2]:
-            if decision:
-                st.markdown(f"**判断: {DECISION_LABELS.get(decision, decision)}**")
+        # 第一優先: 結論
+        st.markdown(f"### 🧭 {headline}")
+
+        # 第二優先: 短い補足説明（結論と重複しない前提の1〜2文）
         if rationale:
             st.write(rationale)
 
+        st.divider()
+
+        # 第三優先: ランク / スコア / 判断（十分な余白を取ったサマリー表示）
+        col_rank, col_score, col_decision = st.columns(3)
+        with col_rank:
+            st.caption("総合ランク")
+            st.markdown(f"#### {rank_badge(overall_rank)}")
+        with col_score:
+            st.caption("総合スコア")
+            st.markdown(f"#### {overall_score:.1f} / 5" if overall_score is not None else "#### —")
+        with col_decision:
+            st.caption("判断")
+            st.markdown(f"#### {DECISION_LABELS.get(decision, decision) if decision else '—'}")
+
 
 def render_evidence(evidence: dict):
+    """
+    判断根拠を項目ごとに分けた構造化表示にする（1行詰め込み表示にしない）。
+    「評価」を最も目立たせ、「根拠」は補足として弱い見た目にする。
+    """
     if not evidence:
         return
-    st.caption(
-        f"🔍 根拠 | 対象箇所: {evidence.get('location', 'N/A')} / "
-        f"観点: {evidence.get('viewpoint', 'N/A')} / "
-        f"評価: {evidence.get('evaluation', 'N/A')} / "
-        f"根拠: {evidence.get('rationale', 'N/A')}"
-    )
+    with st.container(border=True):
+        st.caption("対象箇所")
+        st.write(evidence.get("location", "N/A"))
+
+        st.caption("観点")
+        st.write(evidence.get("viewpoint", "N/A"))
+
+        st.caption("評価")
+        st.markdown(f"**{evidence.get('evaluation', 'N/A')}**")
+
+        st.caption("根拠")
+        st.caption(evidence.get("rationale", "N/A"))
 
 
 def render_axis_block(axis: dict):
