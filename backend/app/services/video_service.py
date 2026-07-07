@@ -422,12 +422,19 @@ class VideoService(BaseService):
         if len(boundaries) < 3:
             boundaries = [0.0, duration / 3, duration * 2 / 3, duration]
 
-        # カット数上限を超える場合は末尾から間引いてマージ
+        # カット数上限を超える場合は、内部の境界のみを対象に間引く。
+        # 先頭(0.0)・末尾(duration)は動画の実際の開始・終了と一致させる
+        # 必要があるため、間引き対象から常に除外する（除外しないと、最も
+        # 近い境界がたまたま末尾だった場合に duration 自体が消え、動画末尾
+        # の区間がどのカットにも属さなくなるバグがあった。実測で再現・修正済み）。
         while len(boundaries) - 1 > self.MAX_CUTS:
-            # 最も近接した境界同士を1つ間引く
-            gaps = [boundaries[i + 1] - boundaries[i] for i in range(len(boundaries) - 1)]
-            min_idx = gaps.index(min(gaps))
-            del boundaries[min_idx + 1]
+            interior_indices = range(1, len(boundaries) - 1)
+
+            def _merged_gap(i: int) -> float:
+                return boundaries[i + 1] - boundaries[i - 1]
+
+            remove_idx = min(interior_indices, key=_merged_gap)
+            del boundaries[remove_idx]
 
         return [(boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)]
 

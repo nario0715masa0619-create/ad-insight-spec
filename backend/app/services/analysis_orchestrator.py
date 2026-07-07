@@ -340,8 +340,25 @@ class AnalysisOrchestrator:
                 logger.info(f"Step timing: 4b_analyze_creative_improvements (parallel) took {time.time() - parallel_start:.2f}s")
                 decision_support_result = decision_support_future.result()
                 logger.info(f"Step timing: 4c_generate_decision_support (parallel) took {time.time() - parallel_start:.2f}s")
-                video_cuts_result = video_cuts_future.result() if video_cuts_future else None
+
+                # video_cuts_future.result() で万一未捕捉の例外が上がると、この
+                # try ブロックの外側（_step_llm 全体）の except に落ちて
+                # self.llm_result が丸ごと空になり、既に成功している
+                # improvements/decision_support まで巻き添えで消えてしまう。
+                # カット別分析はあくまで付加機能であり、全体分析を道連れに
+                # してはならないため、ここだけ個別に fail-soft で受け止める。
+                video_cuts_result = None
                 if video_cuts_future:
+                    try:
+                        video_cuts_result = video_cuts_future.result()
+                    except Exception as e:
+                        logger.warning(f"Video cut analysis failed unexpectedly (non-fatal): {str(e)}")
+                        from app.schemas.llm_response import LLMVideoCutAnalysisValidationError as _VCErr
+                        video_cuts_result = _VCErr(
+                            success=False,
+                            error_code="LLM_ERROR",
+                            reason=f"Video cut analysis failed unexpectedly: {str(e)}",
+                        )
                     logger.info(f"Step timing: 4d_analyze_video_cuts (parallel) took {time.time() - parallel_start:.2f}s")
 
             from app.schemas.llm_response import LLMImprovementValidationError
