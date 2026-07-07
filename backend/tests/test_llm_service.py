@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from app.services.llm_service import LLMService
 from app.schemas.llm_response import LLMResponseSchema, ImprovementCommentsSchema
+from app.services.llm_validator_service import LLMValidatorService
 
 class TestLLMServiceSchema:
     """LLMService のスキーマ検証テスト"""
@@ -310,3 +311,60 @@ class TestLLMServiceConsistency:
         
         # 検証：欠落・型違反 0 件
         print(f"✅ Gemini: 10/10 success, 構造一致率 100%, 欠落・型違反 0 件")
+
+
+class TestDecisionSupportOverallScore:
+    """decision_support の overall_score / overall_rank 算出テスト（LLM出力を信頼せずPython側で計算）"""
+
+    @staticmethod
+    def _make_axis(axis_id: str, score: int):
+        return {
+            "axis": axis_id,
+            "axis_label": axis_id,
+            "score": score,
+            "strength": {
+                "target_element": "テキスト", "description": "説明文です十分な長さ",
+                "reason": "理由の説明文です十分な長さ", "keep_reason": "維持理由の説明文です十分な長さ",
+                "evidence": {"location": "冒頭", "viewpoint": axis_id, "evaluation": "良い評価です", "rationale": "根拠の説明文です十分な長さ"},
+            },
+            "weakness": {
+                "target_element": "テキスト2", "description": "説明文です十分な長さ",
+                "reason": "理由の説明文です十分な長さ", "impact": "影響の説明文です十分な長さ",
+                "evidence": {"location": "中盤", "viewpoint": axis_id, "evaluation": "悪い評価です", "rationale": "根拠の説明文です十分な長さ"},
+            },
+            "recommendation": {
+                "what": "変更内容の説明文です十分な長さ", "why": "理由の説明文です十分な長さ",
+                "how": "検証方法の説明文です十分な長さ", "expected_effect": "CVR改善を見込む",
+            },
+        }
+
+    def _build_decision_support(self, scores):
+        axis_ids = ["appeal", "creative", "cta", "trust", "target"]
+        data = {
+            "summary": {"headline": "テスト結論の見出しです", "decision": "継続", "rationale": "強み弱みの要約テキストです"},
+            "axes": [self._make_axis(a, s) for a, s in zip(axis_ids, scores)],
+        }
+        result = LLMValidatorService().validate_decision_support(data)
+        assert not hasattr(result, "error_code"), getattr(result, "reason", result)
+        return result
+
+    @pytest.mark.parametrize("scores,expected_rank", [
+        ([5, 5, 5, 5, 5], "A"),
+        ([4, 4, 4, 4, 3], "B"),
+        ([3, 3, 3, 3, 2], "C"),
+        ([1, 1, 2, 1, 1], "D"),
+    ])
+    def test_overall_rank_thresholds(self, scores, expected_rank):
+        """overall_score の平均値からA/B/C/Dランクが閾値通りに算出される"""
+        decision_support = self._build_decision_support(scores)
+        LLMService._apply_overall_score(decision_support)
+        assert decision_support.overall_rank == expected_rank
+        assert decision_support.overall_score == pytest.approx(sum(scores) / len(scores), abs=0.01)
+
+    def test_overall_score_not_trusted_from_llm(self):
+        """LLM出力に overall_score/overall_rank が無くても（validatorが受け付けない）Python側で必ず算出される"""
+        decision_support = self._build_decision_support([4, 4, 4, 4, 4])
+        assert decision_support.overall_score is None  # validator通過直後はまだ未設定
+        LLMService._apply_overall_score(decision_support)
+        assert decision_support.overall_score == 4.0
+        assert decision_support.overall_rank == "B"

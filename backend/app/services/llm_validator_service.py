@@ -6,9 +6,8 @@ from app.schemas.llm_response import (
     LLMImprovementValidationError,
     DecisionSupport,
     DecisionSupportSummary,
-    StrengthItem,
-    WeaknessItem,
-    RecommendationItem,
+    AxisBlock,
+    AXIS_IDS,
     LLMDecisionSupportValidationError,
 )
 import logging
@@ -38,6 +37,12 @@ class LLMValidatorService:
         ("一貫している", "整合性が低い"),
         ("目立つ", "目立たない"),
         ("分かりやすい", "分かりにくい")
+    ]
+
+    # ===== expected_effect が具体的な指標に言及しているかの軽量チェック用キーワード =====
+    EXPECTED_EFFECT_METRIC_KEYWORDS = [
+        "CVR", "CTR", "CPA", "CPC", "率", "速度", "時間", "%", "％",
+        "視聴", "離脱", "完了率", "改善", "向上", "増加", "減少",
     ]
     
     def validate_improvement_comments(
@@ -175,12 +180,13 @@ class LLMValidatorService:
         data: Dict[str, Any]
     ) -> Union[DecisionSupport, LLMDecisionSupportValidationError]:
         """
-        decision_support（強み・弱み・改善提案）をバリデーション
+        decision_support（5軸 × 強み・弱み・改善提案）をバリデーション
 
-        - summary / strengths / weaknesses / recommendations の必須構造を確認
-        - 各アイテムを Pydantic モデルで検証
-        - strengths/weaknesses/recommendations の本文に抽象語が含まれないか検査
-        - recommendation.target_weakness_ids が実在する weakness.id を参照しているか検査
+        - summary / axes の必須構造を確認
+        - axes が固定5軸（AXIS_IDS）を過不足・重複なくちょうど1件ずつカバーしているか確認
+        - 各軸を Pydantic モデル（AxisBlock）で検証
+        - strength/weakness の本文に抽象語が含まれないか検査
+        - recommendation.expected_effect が具体的な指標語を含むか検査
         """
         if not isinstance(data, dict):
             return LLMDecisionSupportValidationError(
@@ -189,7 +195,7 @@ class LLMValidatorService:
                 reason="Response is not a dictionary"
             )
 
-        for required_field in ("summary", "strengths", "weaknesses", "recommendations"):
+        for required_field in ("summary", "axes"):
             if required_field not in data:
                 return LLMDecisionSupportValidationError(
                     success=False,
@@ -213,64 +219,62 @@ class LLMValidatorService:
                 reason=str(e)
             )
 
-        strengths_data = data.get("strengths", [])
-        weaknesses_data = data.get("weaknesses", [])
-        recommendations_data = data.get("recommendations", [])
-        if not all(isinstance(x, list) for x in (strengths_data, weaknesses_data, recommendations_data)):
+        axes_data = data.get("axes", [])
+        if not isinstance(axes_data, list):
             return LLMDecisionSupportValidationError(
                 success=False,
                 error_code="INVALID_LIST_TYPE",
-                reason="strengths/weaknesses/recommendations must be lists"
+                reason="'axes' must be a list"
+            )
+
+        # ===== 軸の過不足・重複チェック（AxisBlock 個別のバリデーションより先に行う） =====
+        axis_ids_seen = [item.get("axis") for item in axes_data if isinstance(item, dict)]
+        missing_axes = [a for a in AXIS_IDS if a not in axis_ids_seen]
+        unknown_axes = [a for a in axis_ids_seen if a not in AXIS_IDS]
+        duplicate_axes = [a for a in AXIS_IDS if axis_ids_seen.count(a) > 1]
+        if missing_axes or unknown_axes or duplicate_axes:
+            return LLMDecisionSupportValidationError(
+                success=False,
+                error_code="AXIS_COVERAGE_INVALID",
+                reason=(
+                    f"axes must cover exactly {AXIS_IDS} once each; "
+                    f"missing={missing_axes}, unknown={unknown_axes}, duplicate={duplicate_axes}"
+                )
             )
 
         errors: List[str] = []
-
-        strengths: List[StrengthItem] = []
-        for idx, item in enumerate(strengths_data):
+        axes: List[AxisBlock] = []
+        for idx, item in enumerate(axes_data):
+            axis_id = item.get("axis") if isinstance(item, dict) else None
             try:
-                strength = StrengthItem(**item)
+                axis_block = AxisBlock(**item)
             except Exception as e:
-                errors.append(f"strength {idx}: {str(e)}")
+                errors.append(f"axis {axis_id or idx}: {str(e)}")
                 continue
-            abstract_found = [w for w in self.ABSTRACT_WORDS if w in strength.title or w in strength.description]
-            if abstract_found:
-                errors.append(f"strength {idx}: contains abstract words {abstract_found}")
-                continue
-            strengths.append(strength)
 
-        weaknesses: List[WeaknessItem] = []
-        weakness_ids = set()
-        for idx, item in enumerate(weaknesses_data):
-            try:
-                weakness = WeaknessItem(**item)
-            except Exception as e:
-                errors.append(f"weakness {idx}: {str(e)}")
-                continue
-            abstract_found = [w for w in self.ABSTRACT_WORDS if w in weakness.title or w in weakness.description]
-            if abstract_found:
-                errors.append(f"weakness {idx}: contains abstract words {abstract_found}")
-                continue
-            weaknesses.append(weakness)
-            weakness_ids.add(weakness.id)
+            strength = axis_block.strength
+            weakness = axis_block.weakness
+            recommendation = axis_block.recommendation
 
-        recommendations: List[RecommendationItem] = []
-        for idx, item in enumerate(recommendations_data):
-            try:
-                recommendation = RecommendationItem(**item)
-            except Exception as e:
-                errors.append(f"recommendation {idx}: {str(e)}")
-                continue
-            abstract_found = [w for w in self.ABSTRACT_WORDS if w in recommendation.what or w in recommendation.why]
+            abstract_found = [
+                w for w in self.ABSTRACT_WORDS
+                if w in strength.description or w in strength.reason
+                or w in weakness.description or w in weakness.reason or w in weakness.impact
+            ]
             if abstract_found:
-                errors.append(f"recommendation {idx}: contains abstract words {abstract_found}")
+                errors.append(f"axis {axis_block.axis}: contains abstract words {abstract_found}")
                 continue
-            missing_refs = [wid for wid in recommendation.target_weakness_ids if wid not in weakness_ids]
-            if missing_refs:
+
+            has_metric_keyword = any(
+                kw in recommendation.expected_effect for kw in self.EXPECTED_EFFECT_METRIC_KEYWORDS
+            )
+            if not has_metric_keyword:
                 errors.append(
-                    f"recommendation {idx}: target_weakness_ids references unknown weakness id(s) {missing_refs}"
+                    f"axis {axis_block.axis}: 'expected_effect' does not mention a concrete/measurable outcome"
                 )
                 continue
-            recommendations.append(recommendation)
+
+            axes.append(axis_block)
 
         if errors:
             return LLMDecisionSupportValidationError(
@@ -279,9 +283,11 @@ class LLMValidatorService:
                 reason="; ".join(errors[:3])
             )
 
+        # AXIS_IDS の順に並べ替え、フロント側での表示順を安定させる
+        axes_by_id = {axis.axis: axis for axis in axes}
+        ordered_axes = [axes_by_id[axis_id] for axis_id in AXIS_IDS]
+
         return DecisionSupport(
             summary=summary,
-            strengths=strengths,
-            weaknesses=weaknesses,
-            recommendations=recommendations,
+            axes=ordered_axes,
         )

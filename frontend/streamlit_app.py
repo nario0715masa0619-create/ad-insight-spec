@@ -232,6 +232,158 @@ def render_recommendations(recommendations: list, weaknesses: list):
                 st.caption(f"📈 期待効果: {expected_effect}")
 
 
+# ===== 5軸構造化（axes）の表示: appeal/creative/cta/trust/target =====
+
+AXIS_ORDER = ["appeal", "creative", "cta", "trust", "target"]
+
+AXIS_ICON_LABELS = {
+    "appeal": "🎯 訴求軸",
+    "creative": "🎨 クリエイティブ",
+    "cta": "📣 CTA",
+    "trust": "🤝 信頼",
+    "target": "🧑‍🤝‍🧑 ターゲット",
+}
+
+RANK_BADGES = {
+    "A": "🥇 A（良好）",
+    "B": "🥈 B（合格）",
+    "C": "🥉 C（要改善）",
+    "D": "⚠️ D（要対応）",
+}
+
+
+def axis_label(axis: str) -> str:
+    return AXIS_ICON_LABELS.get(axis, axis)
+
+
+def rank_badge(rank) -> str:
+    if not rank:
+        return "—"
+    return RANK_BADGES.get(rank, rank)
+
+
+def score_stars(score) -> str:
+    if not isinstance(score, (int, float)):
+        return "☆☆☆☆☆"
+    filled = max(0, min(5, int(round(score))))
+    return "★" * filled + "☆" * (5 - filled)
+
+
+def render_overall_score_card(decision_support: dict):
+    """axes形式の decision_support の結論サマリー（総合ランク/スコア付き）"""
+    summary = decision_support.get("summary", {}) or {}
+    headline = summary.get("headline") or "結論サマリー"
+    decision = summary.get("decision")
+    rationale = summary.get("rationale")
+    overall_rank = decision_support.get("overall_rank")
+    overall_score = decision_support.get("overall_score")
+    with st.container(border=True):
+        st.markdown(f"## 🧭 {headline}")
+        cols = st.columns([1, 1, 2])
+        with cols[0]:
+            st.metric("総合ランク", rank_badge(overall_rank))
+        with cols[1]:
+            st.metric("総合スコア", f"{overall_score:.1f} / 5" if overall_score is not None else "—")
+        with cols[2]:
+            if decision:
+                st.markdown(f"**判断: {DECISION_LABELS.get(decision, decision)}**")
+        if rationale:
+            st.write(rationale)
+
+
+def render_evidence(evidence: dict):
+    if not evidence:
+        return
+    st.caption(
+        f"🔍 根拠 | 対象箇所: {evidence.get('location', 'N/A')} / "
+        f"観点: {evidence.get('viewpoint', 'N/A')} / "
+        f"評価: {evidence.get('evaluation', 'N/A')} / "
+        f"根拠: {evidence.get('rationale', 'N/A')}"
+    )
+
+
+def render_axis_block(axis: dict):
+    """1軸分（強み・弱み・改善提案の3点セット必須）の表示"""
+    axis_id = axis.get("axis")
+    score = axis.get("score")
+    strength = axis.get("strength", {}) or {}
+    weakness = axis.get("weakness", {}) or {}
+    recommendation = axis.get("recommendation", {}) or {}
+
+    with st.container(border=True):
+        st.markdown(f"### {axis_label(axis_id)}　{score_stars(score)}（{score if score is not None else '?'}/5）")
+
+        st.markdown("**🟢 強み**")
+        st.write(f"対象: {strength.get('target_element', 'N/A')}")
+        st.write(strength.get("description", ""))
+        reason = strength.get("reason")
+        if reason:
+            st.caption(f"💡 理由: {reason}")
+        keep_reason = strength.get("keep_reason")
+        if keep_reason:
+            st.caption(f"🔒 維持すべき理由: {keep_reason}")
+        render_evidence(strength.get("evidence"))
+
+        st.markdown("**🔴 弱み**")
+        st.write(f"対象: {weakness.get('target_element', 'N/A')}")
+        st.write(weakness.get("description", ""))
+        w_reason = weakness.get("reason")
+        if w_reason:
+            st.caption(f"💡 理由: {w_reason}")
+        impact = weakness.get("impact")
+        if impact:
+            st.caption(f"⚠️ 放置した場合の影響: {impact}")
+        render_evidence(weakness.get("evidence"))
+
+        st.markdown("**✨ 改善提案**")
+        st.write(f"**What（何を変えるか）**: {recommendation.get('what', 'N/A')}")
+        st.write(f"**Why（なぜ変えるか）**: {recommendation.get('why', 'N/A')}")
+        st.write(f"**How（どう検証するか）**: {recommendation.get('how', 'N/A')}")
+        expected_effect = recommendation.get("expected_effect")
+        if expected_effect:
+            st.caption(f"📈 期待効果: {expected_effect}")
+
+
+def render_decision_support_axes(decision_support: dict):
+    """axes形式の decision_support 本体（5軸を固定順で表示）"""
+    render_overall_score_card(decision_support)
+    axes_by_id = {a.get("axis"): a for a in decision_support.get("axes", []) or []}
+    for axis_id in AXIS_ORDER:
+        axis = axes_by_id.get(axis_id)
+        if axis:
+            render_axis_block(axis)
+
+
+def render_decision_support_diff(diff: dict):
+    """前回バージョンとの decision_support 差分（新形式同士の場合のみ渡される）"""
+    if not diff:
+        return
+    with st.container(border=True):
+        st.markdown(f"### 📊 前回分析（version {diff.get('previous_version', '?')}）との差分")
+        previous_headline = diff.get("previous_headline")
+        if previous_headline:
+            st.caption(f"前回の結論: {previous_headline}")
+
+        rank_delta = diff.get("overall_rank_delta")
+        previous_rank = diff.get("previous_overall_rank")
+        if rank_delta is not None:
+            if rank_delta > 0:
+                arrow = f"⬆️ 改善（{rank_badge(previous_rank)} → 今回）"
+            elif rank_delta < 0:
+                arrow = f"⬇️ 悪化（{rank_badge(previous_rank)} → 今回）"
+            else:
+                arrow = f"➡️ 変化なし（{rank_badge(previous_rank)}）"
+            st.write(f"**総合ランク**: {arrow}")
+
+        for ad in diff.get("axis_deltas", []) or []:
+            delta = ad.get("delta", 0)
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
+            st.write(
+                f"- {ad.get('axis_label', ad.get('axis'))}: "
+                f"{ad.get('previous_score')} → {ad.get('current_score')} ({arrow}{abs(delta)})"
+            )
+
+
 def render_legacy_improvements(tab_key: str, asset_id: str, improvements: dict, improvements_error: dict):
     """decision_support が無い（旧データ・生成失敗）場合の従来形式フォールバック表示。"""
     st.markdown("### ✨ 改善提案（従来形式）")
@@ -286,10 +438,15 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         f"（`{creative_core.get('format', 'N/A')}`）"
     )
 
-    # ===== 主画面: 意思決定支援（strengths / weaknesses / recommendations） =====
-    # decision_support が無い（旧データ、または今回の生成が失敗した）場合は、
-    # クラッシュせず従来形式の改善コメント表示にフォールバックする。
-    if decision_support:
+    # ===== 主画面: 意思決定支援 =====
+    # 3分岐フォールバック:
+    #   1. 新形式（axesあり）: 5軸 × 強み/弱み/改善提案の新UI
+    #   2. 旧形式（axesなし、strengths/weaknessesあり）: 従来のフラット表示（データ移行不要）
+    #   3. decision_support自体が無い: 従来の改善コメント表示
+    if decision_support and decision_support.get("axes"):
+        render_decision_support_axes(decision_support)
+        render_decision_support_diff(diagnostics.get("decision_support_diff"))
+    elif decision_support:
         render_decision_summary(decision_support.get("summary", {}) or {})
         render_strengths(decision_support.get("strengths", []) or [])
         weaknesses = decision_support.get("weaknesses", []) or []
@@ -370,20 +527,15 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         key=widget_key(tab_key, "download_result", asset_id),
     )
 
-    # st.rerun() はここでは呼ばない（expander/コンテナの内側から呼ぶと、直前まで
-    # 描画されていた要素が残留することがあるため）。削除成功の判定だけ行い、
-    # expander を抜けた後にまとめて rerun する。
-    #
+    # ===== 削除（st.dialog による確認モーダル） =====
     # 削除APIは asset_id 単位（DELETE /{asset_id}）であり、現在表示中の
     # version だけでなく、この asset_id の全バージョンをまとめて論理削除する。
-    # UI上でその範囲を誤解しないよう、対象・粒度・削除後の挙動を明示する。
-    delete_succeeded = False
+    # モーダル内でその範囲を誤解しないよう、対象・粒度・削除後の挙動を明示する。
     displayed_version = detail.get("version")
-    with st.expander(
-        f"⚠️ この分析結果を削除（{asset_id} の全バージョンが対象）",
-        expanded=False,
-        key=widget_key(tab_key, "expander_delete", asset_id),
-    ):
+    delete_dialog_open_key = widget_key(tab_key, "delete_dialog_open", asset_id)
+
+    @st.dialog(f"⚠️ {asset_id} を削除しますか？")
+    def _confirm_delete_dialog():
         st.caption(
             f"🆔 対象 Asset ID: `{asset_id}`"
             + (f"（現在表示中: version {displayed_version}）" if displayed_version else "")
@@ -394,31 +546,39 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         )
         st.write(
             "**削除後**: 論理削除（データベース上は残り、管理者が必要なら復元可能）"
-            "され、「保存済み結果」の一覧・詳細からは見えなくなります。"
-            "この画面上からの取り消しはできません。"
+            "され、「保存済み結果」の一覧・詳細からは見えなくなります。不可逆な操作です。"
         )
-        confirm = st.checkbox(
-            f"上記を理解した上で、{asset_id} の全バージョンを削除します",
-            key=widget_key(tab_key, "delete_confirm", asset_id),
-        )
-        if confirm and st.button(
-            f"🔴 {asset_id} を削除する（全バージョン・元に戻せません）",
-            key=widget_key(tab_key, "delete_execute", asset_id),
-        ):
-            try:
-                response = requests.delete(f"{API_BASE_URL}/{asset_id}")
-                if response.status_code == 200:
-                    st.success(f"✅ {asset_id} の全バージョンを削除しました（論理削除）")
-                    delete_succeeded = True
-                else:
-                    st.error(f"❌ エラー: {response.status_code}\n{response.text}")
-            except Exception as e:
-                render_api_exception(e)
+        col_cancel, col_confirm = st.columns(2)
+        with col_cancel:
+            if st.button("キャンセル", key=widget_key(tab_key, "delete_cancel", asset_id)):
+                st.session_state[delete_dialog_open_key] = False
+                st.rerun()
+        with col_confirm:
+            if st.button(
+                f"🔴 {asset_id} を削除する（全バージョン）",
+                key=widget_key(tab_key, "delete_execute", asset_id),
+            ):
+                with st.spinner(f"🗑️ {asset_id} を削除中..."):
+                    try:
+                        response = requests.delete(f"{API_BASE_URL}/{asset_id}")
+                        if response.status_code == 200:
+                            st.session_state[delete_dialog_open_key] = False
+                            if on_delete_success:
+                                on_delete_success()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ エラー: {response.status_code}\n{response.text}")
+                    except Exception as e:
+                        render_api_exception(e)
 
-    if delete_succeeded:
-        if on_delete_success:
-            on_delete_success()
-        st.rerun()
+    if st.button(
+        f"🗑️ この分析結果を削除（{asset_id} の全バージョンが対象）",
+        key=widget_key(tab_key, "delete_open", asset_id),
+    ):
+        st.session_state[delete_dialog_open_key] = True
+
+    if st.session_state.get(delete_dialog_open_key):
+        _confirm_delete_dialog()
 
 
 # ページ設定
@@ -457,6 +617,11 @@ with tab_new:
         "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPIファイル（JSON）",
     }
     st.caption(f"ℹ️ {mode_requirements[mode]}")
+
+    asset_name_input = st.text_input(
+        "広告名/キャンペーン名（任意・未入力時はアップロードファイル名を使用）",
+        key=widget_key("analyze", "asset_name_input"),
+    )
 
     uploaded_file = st.file_uploader(
         "画像またはビデオをアップロード",
@@ -514,6 +679,8 @@ with tab_new:
                 if kpi_file_upload:
                     files["kpi_file"] = kpi_file_upload
                 data = {"mode": mode}
+                if asset_name_input:
+                    data["asset_name"] = asset_name_input
                 response = requests.post(f"{API_BASE_URL}/analyze", files=files, data=data, timeout=60)
 
                 if response.status_code == 200:
@@ -662,16 +829,17 @@ with tab_saved:
             limit = st.number_input("Limit", min_value=1, value=10, step=5, key=widget_key("saved_list", "limit"))
 
         if st.button("📊 一覧取得", key=widget_key("saved_list", "fetch")):
-            try:
-                response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
-                if response.status_code == 200:
-                    results = response.json()
-                    st.session_state["list_items"] = results.get("items", [])
-                    st.success(f"✅ {len(results.get('items', []))} 件取得")
-                else:
-                    st.error(f"❌ エラー: {response.status_code}")
-            except Exception as e:
-                render_api_exception(e)
+            with st.spinner("📊 一覧を取得中..."):
+                try:
+                    response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
+                    if response.status_code == 200:
+                        results = response.json()
+                        st.session_state["list_items"] = results.get("items", [])
+                        st.success(f"✅ {len(results.get('items', []))} 件取得")
+                    else:
+                        st.error(f"❌ エラー: {response.status_code}")
+                except Exception as e:
+                    render_api_exception(e)
 
         # 一覧APIはデフォルトで asset_id ごとの最新版のみを返すが、念のため
         # ループ index は残しておく（unknown フォールバック等での widget key 衝突防止）。
@@ -684,26 +852,52 @@ with tab_saved:
         navigate_to_asset_id = None
         navigate_to_version = None
         for idx, item in enumerate(st.session_state.get("list_items", [])):
-            item_asset_id = item.get("asset_meta", {}).get("asset_id", "unknown")
+            item_asset_meta = item.get("asset_meta", {}) or {}
+            item_asset_id = item_asset_meta.get("asset_id", "unknown")
+            item_name = item_asset_meta.get("asset_name") or item_asset_id
             item_format = item.get("creative_core", {}).get("format", "N/A")
             item_version = item.get("version")
+            item_created_at = item.get("created_at")
             item_diag = item.get("diagnostics", {}) or {}
+            item_decision_support = item_diag.get("decision_support")
             item_improvements = item_diag.get("improvements")
-            item_summary = item_improvements.get("summary") if item_improvements else None
-            item_comments = item_improvements.get("comments") if item_improvements else None
-            item_first_comment = item_comments[0] if item_comments else None
 
             with st.container(border=True):
-                st.write(f"**🆔 {item_asset_id}**（`{item_format}`）")
-                if item_summary:
-                    st.write(f"📝 {item_summary}")
+                header_cols = st.columns([3, 1, 1])
+                with header_cols[0]:
+                    st.write(f"**📌 {item_name}**（`{item_format}`）")
+                    st.caption(f"🆔 {item_asset_id}")
+                with header_cols[1]:
+                    if item_created_at:
+                        st.caption(f"🗓️ {item_created_at[:19].replace('T', ' ')}")
+                with header_cols[2]:
+                    if item_decision_support and item_decision_support.get("overall_rank"):
+                        st.write(f"**{rank_badge(item_decision_support.get('overall_rank'))}**")
+                    else:
+                        st.caption("ランク —")
+
+                # 主要改善ポイント1〜2件: 新形式は軸weaknessをスコア昇順、
+                # 旧データは従来の improvements 先頭コメントにフォールバック。
+                if item_decision_support and item_decision_support.get("axes"):
+                    worst_axes = sorted(
+                        item_decision_support.get("axes", []),
+                        key=lambda a: a.get("score", 99),
+                    )[:2]
+                    for axis in worst_axes:
+                        weakness = axis.get("weakness", {}) or {}
+                        st.write(
+                            f"📝 {axis_label(axis.get('axis'))}: "
+                            f"{weakness.get('description', weakness.get('target_element', 'N/A'))}"
+                        )
+                elif item_improvements and item_improvements.get("comments"):
+                    first_comment = item_improvements["comments"][0]
+                    st.write(
+                        f"優先度: **{first_comment.get('priority', 'N/A')}** | "
+                        f"次アクション: {first_comment.get('recommended_action', 'N/A')}"
+                    )
                 else:
                     st.write("📝 改善コメントはありません。")
-                if item_first_comment:
-                    st.write(
-                        f"優先度: **{item_first_comment.get('priority', 'N/A')}** | "
-                        f"次アクション: {item_first_comment.get('recommended_action', 'N/A')}"
-                    )
+
                 if st.button("🔍 詳細を見る", key=widget_key("saved_list", "select_detail", item_asset_id, idx)):
                     navigate_to_asset_id = item_asset_id
                     navigate_to_version = item_version

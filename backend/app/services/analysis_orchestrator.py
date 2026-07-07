@@ -31,20 +31,23 @@ class AnalysisOrchestrator:
         lp_input: Optional[str] = None,
         kpi_path: Optional[str] = None,
         mode: str = "file_plus_lp_plus_manual_kpi",
+        asset_name: Optional[str] = None,
     ):
         """
         Initialize orchestrator with input parameters.
-        
+
         Args:
             input_path: Path to creative file (video/image/text)
             lp_input: LP URL or HTML file path (optional)
             kpi_path: KPI JSON file path (optional)
             mode: Input mode (file_only / file_plus_lp / file_plus_lp_plus_manual_kpi / api_import_ready)
+            asset_name: ユーザー指定の広告名/キャンペーン名（optional。未指定ならフォールバックなし=None）
         """
         self.input_path = input_path
         self.lp_input = lp_input
         self.kpi_path = kpi_path
         self.mode = mode
+        self.asset_name = asset_name
         self.start_time = datetime.now()
         
         # Results from each service
@@ -138,9 +141,12 @@ class AnalysisOrchestrator:
         from app.services.metadata_service import MetadataService
         service = MetadataService()
         self.metadata = service.execute(self.ingested_asset)
-        
+
         if not self.metadata:
             raise ProcessingError("Metadata extraction failed")
+
+        if self.asset_name:
+            self.metadata["asset_name"] = self.asset_name
 
     def _step_content_analysis(self) -> None:
         """

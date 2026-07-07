@@ -46,6 +46,62 @@ class ListResponse(dict):
     pass
 
 
+# ===== 前回分析との差分（decision_support_diff）計算 =====
+# axes 構造導入前の旧データとの比較や、直前バージョンが存在しない場合は
+# fail-soft で None を返す（詳細画面はこの場合、差分セクションを表示しないだけで済む）。
+
+_RANK_ORDER = {"D": 0, "C": 1, "B": 2, "A": 3}
+
+
+def _build_decision_support_diff(
+    current_decision_support: Optional[Dict[str, Any]],
+    previous_record: Optional[AdInsight],
+) -> Optional[Dict[str, Any]]:
+    if not previous_record or not current_decision_support:
+        return None
+    if not isinstance(current_decision_support, dict) or "axes" not in current_decision_support:
+        return None
+
+    previous_decision_support = (
+        previous_record.spec_data.get("diagnostics", {}) or {}
+    ).get("decision_support")
+    if not isinstance(previous_decision_support, dict) or "axes" not in previous_decision_support:
+        return None
+
+    previous_axes_by_id = {a.get("axis"): a for a in previous_decision_support.get("axes", [])}
+    axis_deltas = []
+    for axis in current_decision_support.get("axes", []):
+        axis_id = axis.get("axis")
+        previous_axis = previous_axes_by_id.get(axis_id)
+        if not previous_axis:
+            continue
+        current_score = axis.get("score")
+        previous_score = previous_axis.get("score")
+        if current_score is None or previous_score is None:
+            continue
+        axis_deltas.append({
+            "axis": axis_id,
+            "axis_label": axis.get("axis_label", axis_id),
+            "previous_score": previous_score,
+            "current_score": current_score,
+            "delta": current_score - previous_score,
+        })
+
+    previous_rank = previous_decision_support.get("overall_rank")
+    current_rank = current_decision_support.get("overall_rank")
+    rank_delta = None
+    if previous_rank in _RANK_ORDER and current_rank in _RANK_ORDER:
+        rank_delta = _RANK_ORDER[current_rank] - _RANK_ORDER[previous_rank]
+
+    return {
+        "previous_version": previous_record.version,
+        "previous_overall_rank": previous_rank,
+        "overall_rank_delta": rank_delta,
+        "previous_headline": (previous_decision_support.get("summary") or {}).get("headline"),
+        "axis_deltas": axis_deltas,
+    }
+
+
 # ===== エンドポイント =====
 
 @router.post("/analyze", response_model=Dict[str, Any], tags=["Analysis"])
@@ -54,16 +110,18 @@ async def analyze(
     lp_file: Optional[UploadFile] = None,
     kpi_file: Optional[UploadFile] = None,
     mode: str = Form("file_plus_lp_plus_manual_kpi"),
+    asset_name: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
     ファイルをアップロードして分析を実行
-    
+
     **入力**:
     - `input_file`: 素材ファイル（image/video/text）[必須]
     - `lp_file`: LP ファイル（HTML） [オプション]
     - `kpi_file`: KPI ファイル（JSON） [オプション]
     - `mode`: 入力モード [デフォルト: file_plus_lp_plus_manual_kpi]
+    - `asset_name`: 広告名/キャンペーン名 [オプション、未指定時はアップロードファイル名にフォールバック]
     
     **出力**:
     - `ad_insight_spec v0.2` JSON オブジェクト
@@ -110,14 +168,18 @@ async def analyze(
                     content = await kpi_file.read()
                     f.write(content)
             
+            # asset_name 未指定時は、アップロードファイル名（拡張子除く）にフォールバックする
+            resolved_asset_name = asset_name or Path(input_file.filename).stem
+
             # === Orchestrator で分析実行 ===
             orchestrator = AnalysisOrchestrator(
                 input_path=str(input_path),
                 lp_input=str(lp_path) if lp_path else None,
                 kpi_path=str(kpi_path) if kpi_path else None,
-                mode=mode
+                mode=mode,
+                asset_name=resolved_asset_name,
             )
-            
+
             spec_dict = orchestrator.run()
             
             # Pydantic 検証
@@ -148,9 +210,20 @@ async def analyze(
                 }
             )
 
+            # 前回バージョンとの decision_support 差分（新形式同士の場合のみ、fail-soft）
+            previous_record = repo.get_previous_version(asset_id, db_record.version)
+            current_decision_support = (spec_data_jsonable.get("diagnostics", {}) or {}).get("decision_support")
+            decision_support_diff = _build_decision_support_diff(current_decision_support, previous_record)
+            if decision_support_diff:
+                spec_data_jsonable.setdefault("diagnostics", {})["decision_support_diff"] = decision_support_diff
+
             # UI 側で「この場で作成した版」を selected_version として保持できるよう、
             # DB 確定後の version をレスポンスに追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
-            return {**spec_data_jsonable, "version": db_record.version}
+            return {
+                **spec_data_jsonable,
+                "version": db_record.version,
+                "created_at": db_record.created_at.isoformat(),
+            }
         
         finally:
             # 一時ファイル削除
@@ -247,10 +320,13 @@ async def list_specs(
             asset_id_filter=asset_id
         )
 
-        # UI 側が一覧カードの版を詳細遷移にそのまま引き継げるよう、
-        # 各 item に version を追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
+        # UI 側が一覧カードの版・分析日時をそのまま使えるよう、
+        # 各 item に version / created_at を追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
         return {
-            "items": [{**rec.spec_data, "version": rec.version} for rec in records],
+            "items": [
+                {**rec.spec_data, "version": rec.version, "created_at": rec.created_at.isoformat()}
+                for rec in records
+            ],
             "total": total_count,
             "skip": skip,
             "limit": limit
@@ -306,9 +382,20 @@ async def get_spec(
         
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
-        
-        return record.spec_data
-    
+
+        result = {**record.spec_data, "version": record.version, "created_at": record.created_at.isoformat()}
+
+        # 前回バージョンとの decision_support 差分（新形式同士の場合のみ、fail-soft）。
+        # record.spec_data はSQLAlchemyが追跡するライブオブジェクトなので、ネストした
+        # diagnostics dict を直接 mutate せず、コピーしてから追加する。
+        previous_record = repo.get_previous_version(asset_id, record.version)
+        diagnostics = record.spec_data.get("diagnostics", {}) or {}
+        decision_support_diff = _build_decision_support_diff(diagnostics.get("decision_support"), previous_record)
+        if decision_support_diff:
+            result["diagnostics"] = {**diagnostics, "decision_support_diff": decision_support_diff}
+
+        return result
+
     except HTTPException:
         raise
     except Exception as e:

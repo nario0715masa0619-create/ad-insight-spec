@@ -120,7 +120,25 @@ class AdInsightRepository:
             AdInsight.asset_id == asset_id,
             AdInsight.is_deleted == False
         ).order_by(desc(AdInsight.version)).all()
-    
+
+    def get_previous_version(self, asset_id: str, before_version: int) -> Optional[AdInsight]:
+        """
+        指定バージョンより前の、同一 asset_id の直前バージョンレコードを取得
+        （decision_support の前回分析との差分表示に使用）
+
+        Args:
+            asset_id: 素材 ID
+            before_version: この値未満で最大のバージョンを探す
+
+        Returns:
+            直前バージョンレコード、または存在しない場合 None
+        """
+        return self.db.query(AdInsight).filter(
+            AdInsight.asset_id == asset_id,
+            AdInsight.version < before_version,
+            AdInsight.is_deleted == False
+        ).order_by(desc(AdInsight.version)).first()
+
     def list_active(
         self,
         skip: int = 0,
