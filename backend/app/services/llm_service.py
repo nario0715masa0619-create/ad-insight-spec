@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from typing import Optional, Literal
 from dotenv import load_dotenv
 import httpx
@@ -29,6 +30,13 @@ class LLMService:
     GPT_MODEL = "gpt-4o"
     GEMINI_MODEL = "gemini-2.0-flash"
     MAX_RETRIES = 3
+    # 特定の入力内容ではバリデーションに繰り返し失敗し、MAX_RETRIES 分の
+    # リトライを毎回消費してしまうケースが実機で確認された（5軸診断1回あたり
+    # 約20〜26秒 × 3回で70秒超）。累積リトライ時間がこの秒数を超えたら、
+    # それ以上リトライせず fail-soft で打ち切る（本番のクライアント側
+    # タイムアウトを引き起こさないための上限）。
+    DECISION_SUPPORT_TIME_BUDGET_SECONDS = 50
+    IMPROVEMENTS_TIME_BUDGET_SECONDS = 30
     
     # 共通プロンプト（JSON Schema 固定）
     ANALYSIS_PROMPT_TEMPLATE = """
@@ -323,9 +331,25 @@ class LLMService:
         # プロンプト作成
         analysis_json = json.dumps(creative_analysis, ensure_ascii=False, indent=2)
         prompt = LLMService.IMPROVEMENT_ANALYSIS_PROMPT.format(analysis_data=analysis_json)
-        
+
+        last_result: Union[ImprovementCommentsSchema, LLMImprovementValidationError, None] = None
+        retry_start_time = time.time()
+
         # 再試行ループ（最大 3 回）
         for attempt in range(LLMService.MAX_RETRIES):
+            # decision_support と同様、特定の入力内容でバリデーションに繰り返し
+            # 失敗し続けるケースに備えて、累積時間が予算を超えたらリトライを打ち切る。
+            elapsed = time.time() - retry_start_time
+            if attempt > 0 and elapsed > LLMService.IMPROVEMENTS_TIME_BUDGET_SECONDS:
+                logger.warning(
+                    f"Improvements time budget exceeded after attempt {attempt} "
+                    f"({elapsed:.1f}s > {LLMService.IMPROVEMENTS_TIME_BUDGET_SECONDS}s); stopping retries"
+                )
+                return last_result or LLMImprovementValidationError(
+                    success=False,
+                    error_code="TIME_BUDGET_EXCEEDED",
+                    reason=f"Stopped retrying after {attempt} attempt(s) to stay within the time budget"
+                )
             try:
                 # LLM 呼び出し
                 if model == "gpt":
@@ -373,21 +397,23 @@ class LLMService:
                 else:
                     # バリデーション失敗 → 再試行
                     logger.warning(f"Validation failed (attempt {attempt + 1}): {improvements.reason}")
+                    last_result = improvements
                     if attempt < LLMService.MAX_RETRIES - 1:
                         continue
                     else:
                         return improvements  # 最後の試行で失敗 → エラー返却
-                
+
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error (attempt {attempt + 1}): {str(e)}")
+                last_result = LLMImprovementValidationError(
+                    success=False,
+                    error_code="JSON_PARSE_ERROR",
+                    reason=f"Failed to parse LLM response as JSON: {str(e)}"
+                )
                 if attempt < LLMService.MAX_RETRIES - 1:
                     continue
                 else:
-                    return LLMImprovementValidationError(
-                        success=False,
-                        error_code="JSON_PARSE_ERROR",
-                        reason=f"Failed to parse LLM response as JSON: {str(e)}"
-                    )
+                    return last_result
             
             except Exception as e:
                 logger.error(f"LLM error (attempt {attempt + 1}): {str(e)}")
@@ -426,7 +452,7 @@ class LLMService:
 「配信を続けるか改修するか」「次に何から着手するか」を5秒で判断できるよう、
 固定の5軸（訴求軸・クリエイティブ・CTA・信頼・ターゲット）それぞれについて、
 強み・弱み・改善提案を JSON 形式で構造化してください。
-
+{previous_feedback}
 【分析対象情報（CreativeCore）】
 {analysis_data}
 
@@ -547,9 +573,34 @@ class LLMService:
             f"- {axis_label}（{axis_id}）: {LLMService._AXIS_VIEWPOINT_GUIDE[axis_id]}"
             for axis_id, axis_label in EVALUATION_AXES
         )
-        prompt = LLMService.DECISION_SUPPORT_PROMPT.format(analysis_data=analysis_json, axis_guide=axis_guide)
+
+        # 前回リトライで失敗した理由をプロンプトに差し込むことで、同じ間違いを
+        # 繰り返さず1〜2回目で通る確率を上げる（リトライ回数そのものを減らす）。
+        # 初回は空文字列。
+        previous_feedback = ""
+        last_result: Union[DecisionSupport, LLMDecisionSupportValidationError, None] = None
+        retry_start_time = time.time()
 
         for attempt in range(LLMService.MAX_RETRIES):
+            # 特定の入力内容ではバリデーションに繰り返し失敗し、MAX_RETRIES 分を
+            # 毎回消費してしまうケースを実機で確認した（1回あたり約20〜26秒 ×
+            # 3回で70秒超）。累積時間が予算を超えたら、それ以上リトライせず
+            # 直近の結果を fail-soft で返す。
+            elapsed = time.time() - retry_start_time
+            if attempt > 0 and elapsed > LLMService.DECISION_SUPPORT_TIME_BUDGET_SECONDS:
+                logger.warning(
+                    f"Decision support time budget exceeded after attempt {attempt} "
+                    f"({elapsed:.1f}s > {LLMService.DECISION_SUPPORT_TIME_BUDGET_SECONDS}s); stopping retries"
+                )
+                return last_result or LLMDecisionSupportValidationError(
+                    success=False,
+                    error_code="TIME_BUDGET_EXCEEDED",
+                    reason=f"Stopped retrying after {attempt} attempt(s) to stay within the time budget"
+                )
+
+            prompt = LLMService.DECISION_SUPPORT_PROMPT.format(
+                analysis_data=analysis_json, axis_guide=axis_guide, previous_feedback=previous_feedback
+            )
             try:
                 if model == "gpt":
                     proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
@@ -597,6 +648,11 @@ class LLMService:
                     return decision_support
                 else:
                     logger.warning(f"Decision support validation failed (attempt {attempt + 1}): {decision_support.reason}")
+                    last_result = decision_support
+                    previous_feedback = (
+                        "\n【前回の出力が却下された理由（同じ間違いを繰り返さないこと）】\n"
+                        f"{decision_support.reason}\n"
+                    )
                     if attempt < LLMService.MAX_RETRIES - 1:
                         continue
                     else:
@@ -604,14 +660,20 @@ class LLMService:
 
             except json.JSONDecodeError as e:
                 logger.error(f"Decision support JSON parse error (attempt {attempt + 1}): {str(e)}")
+                last_result = LLMDecisionSupportValidationError(
+                    success=False,
+                    error_code="JSON_PARSE_ERROR",
+                    reason=f"Failed to parse LLM response as JSON: {str(e)}"
+                )
+                previous_feedback = (
+                    "\n【前回の出力が却下された理由（同じ間違いを繰り返さないこと）】\n"
+                    "有効なJSONとしてパースできませんでした。JSON以外の説明文を含めず、"
+                    "指定されたフォーマットのJSONのみを出力してください。\n"
+                )
                 if attempt < LLMService.MAX_RETRIES - 1:
                     continue
                 else:
-                    return LLMDecisionSupportValidationError(
-                        success=False,
-                        error_code="JSON_PARSE_ERROR",
-                        reason=f"Failed to parse LLM response as JSON: {str(e)}"
-                    )
+                    return last_result
 
             except Exception as e:
                 logger.error(f"Decision support LLM error (attempt {attempt + 1}): {str(e)}")
