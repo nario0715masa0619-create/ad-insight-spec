@@ -215,8 +215,9 @@ class AnalysisOrchestrator:
         Uses Gemini 2.0 Flash / GPT-4o integration via LLMService
         """
         from app.services.llm_service import LLMService
+        from concurrent.futures import ThreadPoolExecutor
         import os
-        
+
         try:
             file_path = self.ingested_asset.get("file_path", "unknown") if self.ingested_asset else "unknown"
             format_type = self.ingested_asset.get("format", "") if self.ingested_asset else ""
@@ -246,12 +247,27 @@ class AnalysisOrchestrator:
                 return m.model_dump() if hasattr(m, "model_dump") else m.dict()
             
             cc_dict = _dump_model(llm_result.creative_core) if llm_result.creative_core else {}
-            
-            # P0 改善コメント生成の追加呼び出し
-            improvements_result = LLMService.analyze_creative_improvements(
-                creative_analysis=cc_dict,
-                model=llm_model
-            )
+
+            # P0 改善コメント生成と、意思決定支援ブロック（強み・弱み・改善提案）生成は
+            # どちらも cc_dict のみに依存する独立した呼び出しであり、互いの結果には
+            # 影響しない（fail-soft）。それぞれ最大3回までリトライするため直列実行だと
+            # 合計待ち時間が長くなりすぎ（実測: decision_support単体でリトライ込み最大
+            # 70秒超）、本番でクライアント側タイムアウトを引き起こしていた。
+            # 並列実行に変更し、合計待ち時間を「両者の合計」から「両者のうち遅い方」に
+            # 短縮する。
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                improvements_future = executor.submit(
+                    LLMService.analyze_creative_improvements,
+                    creative_analysis=cc_dict,
+                    model=llm_model,
+                )
+                decision_support_future = executor.submit(
+                    LLMService.generate_decision_support,
+                    creative_analysis=cc_dict,
+                    model=llm_model,
+                )
+                improvements_result = improvements_future.result()
+                decision_support_result = decision_support_future.result()
 
             from app.schemas.llm_response import LLMImprovementValidationError
             if isinstance(improvements_result, LLMImprovementValidationError):
@@ -260,13 +276,6 @@ class AnalysisOrchestrator:
             else:
                 improvements_data = _dump_model(improvements_result)
                 improvements_error = None
-
-            # 意思決定支援ブロック（強み・弱み・改善提案）生成の追加呼び出し。
-            # improvements とは独立した呼び出しであり、失敗しても他の結果には影響しない（fail-soft）。
-            decision_support_result = LLMService.generate_decision_support(
-                creative_analysis=cc_dict,
-                model=llm_model
-            )
 
             from app.schemas.llm_response import LLMDecisionSupportValidationError
             if isinstance(decision_support_result, LLMDecisionSupportValidationError):

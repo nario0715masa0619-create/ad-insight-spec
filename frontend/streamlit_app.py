@@ -41,7 +41,15 @@ ANALYZE_PROGRESS_STEPS = [
 ]
 # 各ステップに到達したとみなす経過秒数の目安（実測値ベースの経験則）
 ANALYZE_PROGRESS_THRESHOLDS = [0, 0, 2, 8]
-ANALYZE_TIMEOUT_SECONDS = 60
+# リクエスト自体のタイムアウト（秒）。5軸診断生成（generate_decision_support）は
+# 実測で1回あたり約20〜25秒、improvements/decision_support とも最大3回リトライ
+# し得るため、直列実行だと理論上の最大待ち時間は100秒を超える。バックエンド側で
+# improvements と decision_support を並列実行するよう変更した後も、リトライが
+# 重なった場合に備えて十分な余裕を持たせる。
+ANALYZE_REQUEST_TIMEOUT_SECONDS = 150
+# この秒数を超えたら「通常より時間がかかっています」という案内に切り替える
+# （リクエスト自体のタイムアウトとは別の、体感メッセージ用のしきい値）
+ANALYZE_SLOW_WARNING_SECONDS = 60
 
 
 def run_analyze_with_progress(files: dict, data: dict):
@@ -60,7 +68,7 @@ def run_analyze_with_progress(files: dict, data: dict):
     def _worker():
         try:
             result["response"] = requests.post(
-                f"{API_BASE_URL}/analyze", files=files, data=data, timeout=ANALYZE_TIMEOUT_SECONDS
+                f"{API_BASE_URL}/analyze", files=files, data=data, timeout=ANALYZE_REQUEST_TIMEOUT_SECONDS
             )
         except Exception as e:
             result["exception"] = e
@@ -91,9 +99,9 @@ def run_analyze_with_progress(files: dict, data: dict):
 
         # 正確な割合は取得できないため、経過時間から漸近的に近づける
         # （100%には到達させず、処理中であることが視覚的に分かる程度で十分）
-        progress_bar.progress(min(0.92, elapsed / 45))
+        progress_bar.progress(min(0.92, elapsed / 90))
 
-        if elapsed > ANALYZE_TIMEOUT_SECONDS:
+        if elapsed > ANALYZE_SLOW_WARNING_SECONDS:
             elapsed_area.warning(f"⏳ 経過時間: {int(elapsed)}秒 - 通常より時間がかかっていますが、処理は継続中です")
         else:
             elapsed_area.caption(f"⏳ 経過時間: {int(elapsed)}秒")
