@@ -13,6 +13,7 @@ Flow: Ingestion ↁEMetadata ↁE(Video/OCR/LP parallel) ↁELLM ↁEConverter �
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+import time
 
 from app.services.base_service import ServiceError, ProcessingError
 
@@ -72,32 +73,49 @@ class AnalysisOrchestrator:
         """
         try:
             logger.info(f"Starting analysis pipeline: mode={self.mode}")
-            
+
+            # 各ステップの所要時間をログに出す（本番でどの段階が遅いかを
+            # 事後調査できるように。特定ファイルでのみ発生するタイムアウトの
+            # 切り分けに使う）。
+            step_start = time.time()
+
+            def _log_step(step_name: str) -> None:
+                nonlocal step_start
+                now = time.time()
+                logger.info(f"Step timing: {step_name} took {now - step_start:.2f}s")
+                step_start = now
+
             # Step 1: Ingestion
             logger.info("Step 1: Ingestion Service")
             self._step_ingest()
-            
+            _log_step("1_ingest")
+
             # Step 2: Metadata Extraction
             logger.info("Step 2: Metadata Service")
             self._step_metadata()
-            
+            _log_step("2_metadata")
+
             # Step 3: Content Analysis (parallel)
             logger.info("Step 3: Content Analysis (Video/OCR/LP)")
             self._step_content_analysis()
-            
+            _log_step("3_content_analysis")
+
             # Step 4: LLM Labeling
             logger.info("Step 4: LLM Service")
             self._step_llm()
-            
+            _log_step("4_llm")
+
             # Step 5: Load KPI (if provided)
             if self.kpi_path:
                 logger.info("Step 5: Load KPI")
                 self._step_load_kpi()
-            
+                _log_step("5_load_kpi")
+
             # Step 6: Converter
             logger.info("Step 6: Converter Service")
             self._step_converter()
-            
+            _log_step("6_converter")
+
             processing_time_ms = int((datetime.now() - self.start_time).total_seconds() * 1000)
             logger.info(f"Analysis complete: {processing_time_ms}ms")
             
@@ -236,16 +254,18 @@ class AnalysisOrchestrator:
                 
             lp_content = self.lp_result.get("fv_copy") if self.lp_result else None
             llm_model = os.getenv("LLM_MODEL", "gpt")
-            
+
+            llm_step_start = time.time()
             llm_result = LLMService.analyze_creative(
                 image_description=description,
                 lp_content=lp_content,
                 model=llm_model
             )
-            
+            logger.info(f"Step timing: 4a_analyze_creative took {time.time() - llm_step_start:.2f}s")
+
             def _dump_model(m):
                 return m.model_dump() if hasattr(m, "model_dump") else m.dict()
-            
+
             cc_dict = _dump_model(llm_result.creative_core) if llm_result.creative_core else {}
 
             # P0 改善コメント生成と、意思決定支援ブロック（強み・弱み・改善提案）生成は
@@ -255,6 +275,7 @@ class AnalysisOrchestrator:
             # 70秒超）、本番でクライアント側タイムアウトを引き起こしていた。
             # 並列実行に変更し、合計待ち時間を「両者の合計」から「両者のうち遅い方」に
             # 短縮する。
+            parallel_start = time.time()
             with ThreadPoolExecutor(max_workers=2) as executor:
                 improvements_future = executor.submit(
                     LLMService.analyze_creative_improvements,
@@ -267,7 +288,9 @@ class AnalysisOrchestrator:
                     model=llm_model,
                 )
                 improvements_result = improvements_future.result()
+                logger.info(f"Step timing: 4b_analyze_creative_improvements (parallel) took {time.time() - parallel_start:.2f}s")
                 decision_support_result = decision_support_future.result()
+                logger.info(f"Step timing: 4c_generate_decision_support (parallel) took {time.time() - parallel_start:.2f}s")
 
             from app.schemas.llm_response import LLMImprovementValidationError
             if isinstance(improvements_result, LLMImprovementValidationError):

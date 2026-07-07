@@ -134,7 +134,10 @@ async def analyze(
         logger.info(
             "Analysis started",
             extra={
-                "filename": input_file.filename,
+                # "filename" は logging.LogRecord の予約属性名と衝突し、
+                # ハンドラ処理時に "Attempt to overwrite 'filename' in
+                # LogRecord" で落ちるため使わない（実機で確認済み）。
+                "uploaded_filename": input_file.filename,
                 "mode": mode,
                 "request_id": request_id_var.get(),
                 "trace_id": trace_id_var.get()
