@@ -517,6 +517,82 @@ def render_decision_support_diff(diff: dict):
             )
 
 
+# ===== 5軸診断が生成できなかった場合の理由説明 =====
+# バックエンドの decision_support_error.error_code は内部向けの技術用語
+# （バリデーション失敗・抽象語検知・時間予算超過 等）なので、そのままUIに
+# 出さず、ユーザーに伝わる自然な日本語（理由 + 次のアクション）に翻訳する。
+DECISION_SUPPORT_ERROR_EXPLANATIONS = {
+    "ITEM_VALIDATION_FAILED": {
+        "reason": "生成された分析結果が、社内の品質基準を満たさなかったためです。",
+        "action": "別のクリエイティブで再度お試しいただくか、時間をおいてもう一度実行してみてください。",
+    },
+    "AXIS_COVERAGE_INVALID": {
+        "reason": "生成された分析結果が、社内の品質基準を満たさなかったためです。",
+        "action": "別のクリエイティブで再度お試しいただくか、時間をおいてもう一度実行してみてください。",
+    },
+    "MAX_RETRIES_EXCEEDED": {
+        "reason": "生成された分析結果が、社内の品質基準を満たさなかったためです。",
+        "action": "別のクリエイティブで再度お試しいただくか、時間をおいてもう一度実行してみてください。",
+    },
+    "TIME_BUDGET_EXCEEDED": {
+        "reason": "映像・画像の内容が抽象的で、診断に必要な具体的な情報（訴求内容やテキストなど）が十分に読み取れなかった可能性があります。",
+        "action": "訴求やテキストがより明確なクリエイティブで再分析してみてください。",
+    },
+    "JSON_PARSE_ERROR": {
+        "reason": "分析結果を生成する過程で、一時的な不具合が発生しました。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "LLM_ERROR": {
+        "reason": "分析結果を生成する過程で、一時的な不具合が発生しました。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "API_KEY_MISSING": {
+        "reason": "システム側の設定により、分析機能を一時的にご利用いただけない状態でした。",
+        "action": "時間をおいて再度お試しいただき、解決しない場合は管理者にご確認ください。",
+    },
+}
+DECISION_SUPPORT_ERROR_EXPLANATION_DEFAULT = {
+    "reason": "分析結果を生成する過程で、想定外の問題が発生しました。",
+    "action": "時間をおいてもう一度実行してみてください。",
+}
+
+CREATIVE_FORMAT_LABELS = {
+    "video_static": "動画",
+    "image_static": "画像",
+}
+
+
+def render_decision_support_missing_notice(
+    tab_key: str, asset_id: str, creative_format: str, decision_support_error: dict
+):
+    """
+    5軸診断（decision_support）が生成できなかった場合の理由説明ボックス。
+
+    「新規分析」「保存済み結果」どちらの詳細画面でも render_asset_detail 経由で
+    共通して使われるため、表示ルールは自動的に両方に適用される。
+    """
+    format_label = CREATIVE_FORMAT_LABELS.get(creative_format, "クリエイティブ")
+    error_code = (decision_support_error or {}).get("error_code")
+    explanation = DECISION_SUPPORT_ERROR_EXPLANATIONS.get(error_code, DECISION_SUPPORT_ERROR_EXPLANATION_DEFAULT)
+
+    with st.container(border=True):
+        st.markdown(f"### ℹ️ この{format_label}では5軸診断を生成できませんでした")
+        st.write(f"**理由**: {explanation['reason']}")
+        st.write(f"**次にお試しいただきたいこと**: {explanation['action']}")
+
+        internal_reason = (decision_support_error or {}).get("reason")
+        if internal_reason:
+            with st.expander(
+                "詳細理由を見る",
+                expanded=False,
+                key=widget_key(tab_key, "expander_decision_support_error", asset_id),
+            ):
+                st.caption("品質基準を満たさなかった項目の概要（社内向け詳細情報）:")
+                st.code(internal_reason, language=None)
+
+    st.caption("以下は、従来形式での改善コメントです（参考情報）。")
+
+
 def render_legacy_improvements(tab_key: str, asset_id: str, improvements: dict, improvements_error: dict):
     """decision_support が無い（旧データ・生成失敗）場合の従来形式フォールバック表示。"""
     st.markdown("### ✨ 改善提案（従来形式）")
@@ -587,9 +663,8 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         render_recommendations(decision_support.get("recommendations", []) or [], weaknesses)
     else:
         if decision_support_error:
-            st.warning(
-                "⚠️ 意思決定支援（強み・弱み・改善提案）の生成に失敗したため、"
-                f"従来形式で表示しています (Error: {decision_support_error.get('error_code', 'UNKNOWN')})"
+            render_decision_support_missing_notice(
+                tab_key, asset_id, creative_core.get("format"), decision_support_error
             )
         else:
             st.caption("ℹ️ この結果は意思決定支援UIの追加前に作成されたため、従来形式で表示しています。")
