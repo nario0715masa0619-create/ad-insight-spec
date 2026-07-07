@@ -282,6 +282,8 @@ class ConverterService(BaseService):
             "improvements_error": llm_result.get("improvements_error"),
             "decision_support": llm_result.get("decision_support"),
             "decision_support_error": llm_result.get("decision_support_error"),
+            "video_cuts": llm_result.get("video_cuts"),
+            "video_cuts_error": llm_result.get("video_cuts_error"),
         }
     
     def _populate_views(

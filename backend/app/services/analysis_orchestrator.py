@@ -56,6 +56,11 @@ class AnalysisOrchestrator:
         self.metadata: Optional[Dict[str, Any]] = None
         self.video_result: Optional[Dict[str, Any]] = None
         self.ocr_result: Optional[Dict[str, Any]] = None
+        # カット別分析（動画のみ）: [{cut_id, start_seconds, end_seconds, frame_path, ocr_text}, ...]
+        # カットの代表フレームは _step_llm（Vision API呼び出し）まで生存させる必要があるため、
+        # 全体動画用の VideoService とは別インスタンスで管理し、run() の最後に明示的に破棄する。
+        self.video_cuts: list = []
+        self._cut_video_service = None
         self.lp_result: Optional[Dict[str, Any]] = None
         self.llm_result: Optional[Dict[str, Any]] = None
         self.kpi_data: Optional[Dict[str, Any]] = None
@@ -124,10 +129,16 @@ class AnalysisOrchestrator:
                 self.final_spec["_metadata"]["processing_time_ms"] = processing_time_ms
             
             return self.final_spec or {}
-        
+
         except Exception as e:
             logger.error(f"Pipeline failed: {str(e)}")
             raise ProcessingError(f"Analysis failed: {str(e)}") from e
+        finally:
+            # カット代表フレームの一時ディレクトリは _step_llm での
+            # Vision API呼び出しまで生存させる必要があったため cleanup を
+            # 遅延させていた。パイプライン完了・失敗を問わずここで破棄する。
+            if self._cut_video_service is not None:
+                self._cut_video_service.cleanup()
 
     def _step_ingest(self) -> None:
         """
@@ -183,18 +194,49 @@ class AnalysisOrchestrator:
         
         # Extract video frames if input is video
         if self.ingested_asset and self.ingested_asset.get("format") == "video_static":
+            video_file_path = self.ingested_asset.get("file_path")
             try:
                 video_service = VideoService(num_frames=5)
-                # Assume ingested_asset has file_path
-                video_file_path = self.ingested_asset.get("file_path")
                 if video_file_path:
                     self.video_result = video_service.execute(video_file_path)
                     logger.info("Video processing successful")
-                    # Cleanup temp files
+                    # Cleanup temp files（この用途のフレームは以降どこにも使われない）
                     video_service.cleanup()
             except Exception as e:
                 logger.warning(f"Video processing failed (non-fatal): {str(e)}")
                 self.video_result = {"success": False, "message": str(e)}
+
+            # カット別分析用: シーン切り替え目安でカット分割し、各カットの
+            # 代表フレームを抽出してOCRする。代表フレームは _step_llm の
+            # Vision API呼び出しまで使うため、ここではcleanup()しない
+            # （run() の最後で明示的に破棄する）。失敗しても全体分析には
+            # 影響させない（fail-soft、video_cuts は空リストのまま）。
+            try:
+                from app.services.ocr_service import OCRService as _OCRServiceForCuts
+                if video_file_path:
+                    duration = (self.video_result or {}).get("duration_seconds", 0)
+                    self._cut_video_service = VideoService()
+                    cut_ranges = self._cut_video_service.detect_cuts(video_file_path, duration)
+                    video_cuts = []
+                    for idx, (start, end) in enumerate(cut_ranges, start=1):
+                        frame_path = self._cut_video_service.extract_cut_frame(
+                            video_file_path, (start + end) / 2
+                        )
+                        if not frame_path:
+                            continue
+                        ocr = _OCRServiceForCuts.extract_text_from_image(frame_path)
+                        video_cuts.append({
+                            "cut_id": f"cut_{idx}",
+                            "start_seconds": start,
+                            "end_seconds": end,
+                            "frame_path": frame_path,
+                            "ocr_text": ocr.get("ocr_extracted_text", ""),
+                        })
+                    self.video_cuts = video_cuts
+                    logger.info(f"Detected {len(video_cuts)} video cuts")
+            except Exception as e:
+                logger.warning(f"Video cut detection failed (non-fatal): {str(e)}")
+                self.video_cuts = []
         else:
             self.video_result = {}
         
@@ -268,15 +310,14 @@ class AnalysisOrchestrator:
 
             cc_dict = _dump_model(llm_result.creative_core) if llm_result.creative_core else {}
 
-            # P0 改善コメント生成と、意思決定支援ブロック（強み・弱み・改善提案）生成は
-            # どちらも cc_dict のみに依存する独立した呼び出しであり、互いの結果には
-            # 影響しない（fail-soft）。それぞれ最大3回までリトライするため直列実行だと
-            # 合計待ち時間が長くなりすぎ（実測: decision_support単体でリトライ込み最大
-            # 70秒超）、本番でクライアント側タイムアウトを引き起こしていた。
-            # 並列実行に変更し、合計待ち時間を「両者の合計」から「両者のうち遅い方」に
-            # 短縮する。
+            # P0 改善コメント生成・意思決定支援ブロック生成・（動画のみ）カット別分析は
+            # いずれも独立した呼び出しであり、互いの結果には影響しない（fail-soft）。
+            # それぞれ最大3回までリトライするため直列実行だと合計待ち時間が長くなり
+            # すぎ（実測: decision_support単体でリトライ込み最大70秒超）、本番で
+            # クライアント側タイムアウトを引き起こしていた。並列実行に変更し、
+            # 合計待ち時間を「全体の合計」から「最も遅いもの」に短縮する。
             parallel_start = time.time()
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 improvements_future = executor.submit(
                     LLMService.analyze_creative_improvements,
                     creative_analysis=cc_dict,
@@ -287,10 +328,38 @@ class AnalysisOrchestrator:
                     creative_analysis=cc_dict,
                     model=llm_model,
                 )
+                video_cuts_future = None
+                if self.video_cuts:
+                    video_cuts_future = executor.submit(
+                        LLMService.analyze_video_cuts,
+                        video_cuts=self.video_cuts,
+                        model=llm_model,
+                    )
+
                 improvements_result = improvements_future.result()
                 logger.info(f"Step timing: 4b_analyze_creative_improvements (parallel) took {time.time() - parallel_start:.2f}s")
                 decision_support_result = decision_support_future.result()
                 logger.info(f"Step timing: 4c_generate_decision_support (parallel) took {time.time() - parallel_start:.2f}s")
+
+                # video_cuts_future.result() で万一未捕捉の例外が上がると、この
+                # try ブロックの外側（_step_llm 全体）の except に落ちて
+                # self.llm_result が丸ごと空になり、既に成功している
+                # improvements/decision_support まで巻き添えで消えてしまう。
+                # カット別分析はあくまで付加機能であり、全体分析を道連れに
+                # してはならないため、ここだけ個別に fail-soft で受け止める。
+                video_cuts_result = None
+                if video_cuts_future:
+                    try:
+                        video_cuts_result = video_cuts_future.result()
+                    except Exception as e:
+                        logger.warning(f"Video cut analysis failed unexpectedly (non-fatal): {str(e)}")
+                        from app.schemas.llm_response import LLMVideoCutAnalysisValidationError as _VCErr
+                        video_cuts_result = _VCErr(
+                            success=False,
+                            error_code="LLM_ERROR",
+                            reason=f"Video cut analysis failed unexpectedly: {str(e)}",
+                        )
+                    logger.info(f"Step timing: 4d_analyze_video_cuts (parallel) took {time.time() - parallel_start:.2f}s")
 
             from app.schemas.llm_response import LLMImprovementValidationError
             if isinstance(improvements_result, LLMImprovementValidationError):
@@ -308,6 +377,24 @@ class AnalysisOrchestrator:
                 decision_support_data = _dump_model(decision_support_result)
                 decision_support_error = None
 
+            from app.schemas.llm_response import LLMVideoCutAnalysisValidationError
+            video_cuts_data = None
+            video_cuts_error = None
+            if video_cuts_result is not None:
+                if isinstance(video_cuts_result, LLMVideoCutAnalysisValidationError):
+                    video_cuts_error = _dump_model(video_cuts_result)
+                else:
+                    video_cuts_data = _dump_model(video_cuts_result)
+                    # LLMは時間範囲を出力しない（バックエンド側で確定済みのため）。
+                    # ここで self.video_cuts（検出済みの start/end）を cut_id で
+                    # マージしてから最終結果に格納する。
+                    timing_by_cut_id = {c["cut_id"]: c for c in self.video_cuts}
+                    for cut in video_cuts_data.get("cuts", []):
+                        timing = timing_by_cut_id.get(cut.get("cut_id"))
+                        if timing:
+                            cut["start_seconds"] = timing["start_seconds"]
+                            cut["end_seconds"] = timing["end_seconds"]
+
             self.llm_result = {
                 "creative_core": {
                     "visuals": cc_dict.get("visuals", {}),
@@ -322,7 +409,9 @@ class AnalysisOrchestrator:
                 "improvements": improvements_data,
                 "improvements_error": improvements_error,
                 "decision_support": decision_support_data,
-                "decision_support_error": decision_support_error
+                "decision_support_error": decision_support_error,
+                "video_cuts": video_cuts_data,
+                "video_cuts_error": video_cuts_error,
             }
             logger.info("LLM analysis complete")
         except Exception as e:

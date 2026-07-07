@@ -593,6 +593,101 @@ def render_decision_support_missing_notice(
     st.caption("以下は、従来形式での改善コメントです（参考情報）。")
 
 
+# ===== カット別分析（video_cuts、動画のみ） =====
+VIDEO_CUTS_ERROR_EXPLANATIONS = {
+    "CUT_COVERAGE_INVALID": {
+        "reason": "生成された分析結果が、社内の品質基準を満たさなかったためです。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "ITEM_VALIDATION_FAILED": {
+        "reason": "生成された分析結果が、社内の品質基準を満たさなかったためです。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "TIME_BUDGET_EXCEEDED": {
+        "reason": "動画の内容からカットごとの判断材料を十分に読み取れず、分析に時間がかかりすぎました。",
+        "action": "訴求やテキストがより明確なカット構成の動画で再度お試しください。",
+    },
+    "JSON_PARSE_ERROR": {
+        "reason": "分析結果を生成する過程で、一時的な不具合が発生しました。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "LLM_ERROR": {
+        "reason": "分析結果を生成する過程で、一時的な不具合が発生しました。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+    "API_KEY_MISSING": {
+        "reason": "システム側の設定により、分析機能を一時的にご利用いただけない状態でした。",
+        "action": "時間をおいて再度お試しいただき、解決しない場合は管理者にご確認ください。",
+    },
+    "NO_CUTS": {
+        "reason": "動画からカット（シーンの区切り）を検出できませんでした。",
+        "action": "別の動画で再度お試しください。",
+    },
+    "NO_FRAMES": {
+        "reason": "カットの代表フレームを取得できませんでした。",
+        "action": "時間をおいてもう一度実行してみてください。",
+    },
+}
+VIDEO_CUTS_ERROR_EXPLANATION_DEFAULT = {
+    "reason": "分析結果を生成する過程で、想定外の問題が発生しました。",
+    "action": "時間をおいてもう一度実行してみてください。",
+}
+
+
+def render_video_cuts_missing_notice(tab_key: str, asset_id: str, video_cuts_error: dict):
+    """カット別分析が生成できなかった場合の理由説明ボックス（decision_supportと同じトーン）。"""
+    error_code = (video_cuts_error or {}).get("error_code")
+    explanation = VIDEO_CUTS_ERROR_EXPLANATIONS.get(error_code, VIDEO_CUTS_ERROR_EXPLANATION_DEFAULT)
+
+    with st.container(border=True):
+        st.markdown("### ℹ️ カット別分析を生成できませんでした")
+        st.write(f"**理由**: {explanation['reason']}")
+        st.write(f"**次にお試しいただきたいこと**: {explanation['action']}")
+
+        internal_reason = (video_cuts_error or {}).get("reason")
+        if internal_reason:
+            with st.expander(
+                "詳細理由を見る",
+                expanded=False,
+                key=widget_key(tab_key, "expander_video_cuts_error", asset_id),
+            ):
+                st.caption("品質基準を満たさなかった項目の概要（社内向け詳細情報）:")
+                st.code(internal_reason, language=None)
+
+
+def render_video_cut_card(cut: dict):
+    """カット1件分のカード表示（時間範囲・役割・要約・強み/問題点・改善提案・根拠）。"""
+    start = cut.get("start_seconds")
+    end = cut.get("end_seconds")
+    time_range = f"{start:.1f}〜{end:.1f}秒" if start is not None and end is not None else "時間範囲不明"
+    # 最初の3秒以内から始まるカットは Hook として視覚的に強調する
+    is_hook = start is not None and start < 3.0
+    title_prefix = "🔥 " if is_hook else ""
+
+    with st.container(border=True):
+        st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`")
+        st.write(f"**役割**: {cut.get('role_tag', 'N/A')}")
+        st.write(cut.get("summary", ""))
+        strength_or_issue = cut.get("strength_or_issue")
+        if strength_or_issue:
+            st.caption(f"💡 強み/問題点: {strength_or_issue}")
+        st.write(f"**改善提案**: {cut.get('improvement_suggestion', 'N/A')}")
+        evidence = cut.get("evidence")
+        if evidence:
+            st.caption(f"🔍 根拠: {evidence}")
+
+
+def render_video_cuts(video_cuts: dict):
+    """カット別分析セクション全体（動画分析結果の下部に表示）。"""
+    cuts = (video_cuts or {}).get("cuts", []) or []
+    if not cuts:
+        return
+    st.markdown("### 🎬 カット別分析")
+    st.caption("シーン切り替え・構図変化を目安にした、ざっくりしたカット単位の分析です。")
+    for cut in cuts:
+        render_video_cut_card(cut)
+
+
 def render_legacy_improvements(tab_key: str, asset_id: str, improvements: dict, improvements_error: dict):
     """decision_support が無い（旧データ・生成失敗）場合の従来形式フォールバック表示。"""
     st.markdown("### ✨ 改善提案（従来形式）")
@@ -669,6 +764,15 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         else:
             st.caption("ℹ️ この結果は意思決定支援UIの追加前に作成されたため、従来形式で表示しています。")
         render_legacy_improvements(tab_key, asset_id, improvements, improvements_error)
+
+    # ===== カット別分析（video_cuts、動画のみ） =====
+    if creative_core.get("format") == "video_static":
+        video_cuts = diagnostics.get("video_cuts")
+        video_cuts_error = diagnostics.get("video_cuts_error")
+        if video_cuts and video_cuts.get("cuts"):
+            render_video_cuts(video_cuts)
+        elif video_cuts_error:
+            render_video_cuts_missing_notice(tab_key, asset_id, video_cuts_error)
 
     # ===== 補助情報（折りたたみ）: CreativeCore / 改善コメント原文 / LLMメタデータ / 完全なJSON =====
     visuals = creative_core.get("visuals", {}) or {}

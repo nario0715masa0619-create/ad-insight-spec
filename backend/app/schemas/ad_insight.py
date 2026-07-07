@@ -28,6 +28,8 @@ from app.schemas.llm_response import (
     LLMImprovementValidationError,
     DecisionSupport,
     LLMDecisionSupportValidationError,
+    VideoCutAnalysis,
+    LLMVideoCutAnalysisValidationError,
 )
 
 
@@ -484,6 +486,16 @@ class Diagnostics(BaseModel):
     decision_support_error: Optional[LLMDecisionSupportValidationError] = Field(
         default=None,
         description="意思決定支援生成失敗時のエラー情報"
+    )
+
+    # ===== 新規: カット別分析（video_cuts、optional・動画のみ） =====
+    video_cuts: Optional[VideoCutAnalysis] = Field(
+        default=None,
+        description="動画のカット別分析（シーン切り替え単位の役割・要約・改善提案）"
+    )
+    video_cuts_error: Optional[LLMVideoCutAnalysisValidationError] = Field(
+        default=None,
+        description="カット別分析生成失敗時のエラー情報"
     )
 
     llm_model: Optional[str] = Field(None, description="LLM Model")
