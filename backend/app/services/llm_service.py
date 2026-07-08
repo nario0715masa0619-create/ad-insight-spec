@@ -24,6 +24,10 @@ from app.schemas.llm_response import (
     LLMVideoCutAnalysisValidationError,
 )
 from app.services.llm_validator_service import LLMValidatorService
+from app.services.text_mode_classifier import (
+    TEXT_MODE_RICH,
+    TEXT_MODE_ASR_ONLY,
+)
 
 logger = logging.getLogger(__name__)
 # config.py から動的に読み込むため、トップレベルでの API キー初期化を削除
@@ -457,6 +461,7 @@ class LLMService:
 固定の5軸（訴求軸・クリエイティブ・CTA・信頼・ターゲット）それぞれについて、
 強み・弱み・改善提案を JSON 形式で構造化してください。
 {previous_feedback}
+{text_mode_guidance}
 【分析対象情報（CreativeCore）】
 {analysis_data}
 
@@ -551,9 +556,47 @@ class LLMService:
         decision_support.overall_score = round(overall_score, 2)
         decision_support.overall_rank = overall_rank
 
+    # ===== 5軸診断のテキスト入力モード別ガイダンス =====
+    # 「テロップ無し・音声ナレーションあり」動画でもASRを主情報源として
+    # 5軸診断を有効化するための、モード別プロンプト差し込み文。
+    _TEXT_MODE_ASR_ONLY_GUIDANCE = """
+【重要: この動画は明示的なテロップ（画面上テキスト）がほとんどありません】
+以下の「音声の文字起こし（ASR）」を、この5軸診断の主な情報源として扱ってください。
+- この動画は意図的にテロップを使わない構成である可能性があります。
+- 改善提案では、テロップの追加を安易に推奨しないでください。
+- 映像の構成・ストーリーテリング・テンポ・音声の伝え方など、テキスト以外の
+  要素についても積極的に改善提案を行ってください。
+- 上記ルールや出力フォーマット中の「テロップ」「画面上のテキスト」という
+  表現は、この動画では「ナレーション」「音声で伝えられているメッセージ」と
+  読み替えて評価してください。
+
+【音声の文字起こし（ASR）】
+{asr_text}
+"""
+
+    _TEXT_MODE_RICH_WITH_ASR_GUIDANCE = """
+【参考情報】
+以下は音声の文字起こし（ASR）です。画面上テキストを主な情報源とし、
+これはあくまで補助的な参考情報として扱ってください。
+
+{asr_text}
+"""
+
+    @staticmethod
+    def _build_text_mode_guidance(text_mode: str, asr_text: Optional[str]) -> str:
+        """text_mode/asr_textから、DECISION_SUPPORT_PROMPTに差し込むガイダンス文を組み立てる。"""
+        if text_mode == TEXT_MODE_ASR_ONLY and asr_text:
+            return LLMService._TEXT_MODE_ASR_ONLY_GUIDANCE.format(asr_text=asr_text)
+        if asr_text:
+            # RICHだがasr_textが渡された場合（保険的なケース）: 補助情報として添付するのみ
+            return LLMService._TEXT_MODE_RICH_WITH_ASR_GUIDANCE.format(asr_text=asr_text)
+        return ""
+
     @staticmethod
     def generate_decision_support(
         creative_analysis: dict,
+        text_mode: str = TEXT_MODE_RICH,
+        asr_text: Optional[str] = None,
         model: str = "gpt"
     ) -> Union[DecisionSupport, LLMDecisionSupportValidationError]:
         """
@@ -561,6 +604,11 @@ class LLMService:
 
         既存の analyze_creative_improvements とは独立した呼び出しであり、
         本メソッドの失敗は diagnostics.improvements の生成には影響しない（fail-soft）。
+
+        text_mode: TEXT_MODE_RICH（既定・画像や旧来動作）/ TEXT_MODE_ASR_ONLY
+                   （テロップ無し・ASR主体）。呼び出し側（analysis_orchestrator）が
+                   text_mode_classifier.classify_text_mode で判定して渡す。
+        asr_text: text_mode=TEXT_MODE_ASR_ONLY の場合の音声文字起こし本文。
         """
         from app.config import get_settings
         settings = get_settings()
@@ -577,6 +625,7 @@ class LLMService:
             f"- {axis_label}（{axis_id}）: {LLMService._AXIS_VIEWPOINT_GUIDE[axis_id]}"
             for axis_id, axis_label in EVALUATION_AXES
         )
+        text_mode_guidance = LLMService._build_text_mode_guidance(text_mode, asr_text)
 
         # 前回リトライで失敗した理由をプロンプトに差し込むことで、同じ間違いを
         # 繰り返さず1〜2回目で通る確率を上げる（リトライ回数そのものを減らす）。
@@ -603,7 +652,10 @@ class LLMService:
                 )
 
             prompt = LLMService.DECISION_SUPPORT_PROMPT.format(
-                analysis_data=analysis_json, axis_guide=axis_guide, previous_feedback=previous_feedback
+                analysis_data=analysis_json,
+                axis_guide=axis_guide,
+                previous_feedback=previous_feedback,
+                text_mode_guidance=text_mode_guidance,
             )
             try:
                 if model == "gpt":
