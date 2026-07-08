@@ -341,6 +341,13 @@ class LLMVideoCutAnalysisValidationError(BaseModel):
 # 旧来の video_cuts / video_cuts_error という2フィールド並存パターンを1つに統合する。
 
 VIDEO_CUTS_SCHEMA_VERSION = "1.0"
+# バージョン方針（詳細は docs/specs/video_cuts_json_schema_v1_0.md の「role_tagの語彙追加ルール」章）:
+# - VIDEO_CUT_ROLE_TAGS への値の「追加」は non-breaking change（schema_version 更新不要。
+#   ただしフロントエンド ROLE_TAG_STYLES への対応する色・アイコン追加を忘れないこと）。
+# - 必須フィールドの削除・改名・型変更、既存role_tag値の意味変更は breaking change。
+#   その場合は VIDEO_CUTS_SCHEMA_VERSION を上げ、読み出し側で schema_version の値により
+#   分岐させること（現状は「generation_statusキーの有無」だけで新/旧を判定しているが、
+#   新形式が複数バージョンに増えたらこの判定では不十分になる）。
 
 VIDEO_CUTS_GENERATION_STATUSES = ["success", "failed", "not_attempted"]
 

@@ -184,6 +184,13 @@ LLM生成結果は自由記述で揺れる可能性があるため、`VideoCutCo
 - 既存の required フィールドの削除・改名・型変更は行わない。
 - `GET /specs/{asset_id}` は保存済みレコードを新スキーマへ再検証しないため、旧形式（`{"cuts": [...]}` 単体 + 別フィールドの `video_cuts_error`）のレコードは移行不要でそのまま読み出せる。フロントエンドは新旧両方の形状を判定して描画する（`frontend/streamlit_app.py::render_asset_detail`）。
 - 新規に生成される分析結果は、動画フォーマットである限り常に `diagnostics.video_cuts` に本スキーマのオブジェクトを格納する（`generation_status.status` がいずれの値であっても、フィールド自体は必ず存在する）。
+- `schema_version` は v1.0時点では1バージョンしか存在せず、現状のコードは「新形式（`generation_status`キーを持つ）か旧形式（`cuts`キーを直接持つ）か」で分岐しており、`schema_version` の値そのものを見て分岐する処理はまだ無い。将来 `schema_version` を上げる変更を行う際は、読み出し側（フロントエンド・バックエンドどちらも）で `schema_version` の値によって処理を分岐させること（`generation_status`キーの有無だけに頼った判定は、旧形式・新形式が今後3種類以上に増えた場合に破綻する）。
+
+### role_tag の語彙追加ルール
+
+- `VIDEO_CUT_ROLE_TAGS`（`hook`/`benefit`/`proof`/`trust`/`cta`/`other`）に新しい値を**追加**するのは non-breaking change として扱ってよい（`schema_version` の更新は不要）。既存の値の意味・呼び出し側の分岐ロジックに影響しないため。
+  - ただし追加した場合は、フロントエンドの `ROLE_TAG_STYLES`（`frontend/streamlit_app.py`）に対応する色・アイコン・日本語ラベルを同時に追加すること。追加を怠ると `_role_tag_style_key` のフォールバックにより `other`（その他）として表示され、情報が欠落する。
+- 既存の値（`hook`/`benefit`/`proof`/`trust`/`cta`/`other`）を**削除・改名**するのは breaking change。`schema_version` を上げ、旧値を読める後方互換のマッピングを残すこと（`_ROLE_TAG_NORMALIZATION_MAP` に旧値→新値のエントリを追加する形が望ましい。実例: 旧`証拠・信頼形成`→新`proof`）。
 
 ## 🔗 関連ドキュメント
 

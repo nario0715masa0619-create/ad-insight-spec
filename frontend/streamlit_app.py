@@ -925,6 +925,13 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
     # video_summary/video_cutsを1ブロックにまとめたもの）と旧形式
     # （{"cuts": [...]} 単体 + 別フィールドの video_cuts_error）の両方があり得る
     # （旧レコードはGET時に新スキーマへ再検証されないため、後方互換として両対応する）。
+    #
+    # 現時点では schema_version は "1.0" の1種類しかなく、ここでは
+    # 「generation_status キーを持つか(=新形式)/持たないか(=旧形式)」だけで
+    # 分岐している。将来 schema_version を上げる変更をする場合は、
+    # この判定を video_cuts_raw.get("schema_version") の値による分岐へ拡張すること
+    # （新形式が2種類以上に増えた時点で、キーの有無だけの判定は破綻する）。
+    # 詳細: docs/specs/video_cuts_json_schema_v1_0.md
     if creative_core.get("format") == "video_static":
         video_cuts_raw = diagnostics.get("video_cuts")
         if isinstance(video_cuts_raw, dict) and "generation_status" in video_cuts_raw:
