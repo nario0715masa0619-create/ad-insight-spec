@@ -447,7 +447,8 @@ def render_axis_block(axis: dict):
     with st.container(border=True):
         st.markdown(f"### {axis_label(axis_id)}　{score_stars(score)}（{score if score is not None else '?'}/5）")
 
-        st.markdown("**🟢 強み**")
+        strength_aspect = strength.get("aspect")
+        st.markdown(f"**🟢 強み（{strength_aspect}）**" if strength_aspect else "**🟢 強み**")
         st.write(f"対象: {strength.get('target_element', 'N/A')}")
         st.write(strength.get("description", ""))
         reason = strength.get("reason")
@@ -458,7 +459,8 @@ def render_axis_block(axis: dict):
             st.caption(f"🔒 維持すべき理由: {keep_reason}")
         render_evidence(strength.get("evidence"))
 
-        st.markdown("**🔴 弱み**")
+        weakness_aspect = weakness.get("aspect")
+        st.markdown(f"**🔴 弱み（{weakness_aspect}）**" if weakness_aspect else "**🔴 弱み**")
         st.write(f"対象: {weakness.get('target_element', 'N/A')}")
         st.write(weakness.get("description", ""))
         w_reason = weakness.get("reason")
