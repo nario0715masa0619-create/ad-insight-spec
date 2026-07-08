@@ -136,6 +136,7 @@ class TestParallelGenerationIsolation:
                 score=4,
                 strength={
                     "target_element": "テスト要素",
+                    "aspect": "強みの観点",
                     "description": "テスト用の説明テキストです",
                     "reason": "テスト用の理由テキストです",
                     "keep_reason": "テスト用の維持理由テキストです",
@@ -143,6 +144,7 @@ class TestParallelGenerationIsolation:
                 },
                 weakness={
                     "target_element": "テスト要素",
+                    "aspect": "弱みの観点",
                     "description": "テスト用の説明テキストです",
                     "reason": "テスト用の理由テキストです",
                     "impact": "テスト用の影響テキストです",
@@ -298,6 +300,7 @@ def _make_decision_support():
             score=4,
             strength={
                 "target_element": "テスト要素",
+                "aspect": "強みの観点",
                 "description": "テスト用の説明テキストです",
                 "reason": "テスト用の理由テキストです",
                 "keep_reason": "テスト用の維持理由テキストです",
@@ -305,6 +308,7 @@ def _make_decision_support():
             },
             weakness={
                 "target_element": "テスト要素",
+                "aspect": "弱みの観点",
                 "description": "テスト用の説明テキストです",
                 "reason": "テスト用の理由テキストです",
                 "impact": "テスト用の影響テキストです",

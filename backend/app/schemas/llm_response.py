@@ -137,6 +137,15 @@ class AxisStrength(BaseModel):
         min_length=2,
         max_length=80,
     )
+    # target_element が「対象箇所（どこ）」であるのに対し、aspect は「評価観点（何について）」を表す。
+    # 同一軸のweaknessと同じaspectを使うと「強いのか弱いのか分からない」矛盾になるため、
+    # validate_decision_support で strength.aspect == weakness.aspect を機械的にチェックする。
+    aspect: str = Field(
+        ...,
+        description="評価観点ラベル（例: トーンの印象、証拠・差別化等）。同一軸のweaknessとは必ず異なる観点にする",
+        min_length=2,
+        max_length=20,
+    )
     description: str = Field(..., description="何が良いかの具体説明", min_length=10, max_length=200)
     reason: str = Field(..., description="強みと判断した理由（ユーザー心理・ベストプラクティスの観点）", min_length=10, max_length=200)
     keep_reason: str = Field(..., description="今後も維持・再利用すべき理由", min_length=10, max_length=200)
@@ -147,6 +156,12 @@ class AxisWeakness(BaseModel):
     """軸ごとの弱み: 成果の足を引っ張っているボトルネック"""
 
     target_element: str = Field(..., description="対象要素の特定", min_length=2, max_length=80)
+    aspect: str = Field(
+        ...,
+        description="評価観点ラベル。同一軸のstrengthとは必ず異なる観点にする",
+        min_length=2,
+        max_length=20,
+    )
     description: str = Field(..., description="何が問題かの具体説明", min_length=10, max_length=200)
     reason: str = Field(..., description="弱みと判断した理由（ユーザー心理・ベストプラクティスの観点）", min_length=10, max_length=200)
     impact: str = Field(..., description="放置した場合の成果への影響", min_length=10, max_length=200)

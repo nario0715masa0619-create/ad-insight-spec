@@ -323,12 +323,12 @@ class TestDecisionSupportOverallScore:
             "axis_label": axis_id,
             "score": score,
             "strength": {
-                "target_element": "テキスト", "description": "説明文です十分な長さ",
+                "target_element": "テキスト", "aspect": "強みの観点", "description": "説明文です十分な長さ",
                 "reason": "理由の説明文です十分な長さ", "keep_reason": "維持理由の説明文です十分な長さ",
                 "evidence": {"location": "冒頭", "viewpoint": axis_id, "evaluation": "良い評価です", "rationale": "根拠の説明文です十分な長さ"},
             },
             "weakness": {
-                "target_element": "テキスト2", "description": "説明文です十分な長さ",
+                "target_element": "テキスト2", "aspect": "弱みの観点", "description": "説明文です十分な長さ",
                 "reason": "理由の説明文です十分な長さ", "impact": "影響の説明文です十分な長さ",
                 "evidence": {"location": "中盤", "viewpoint": axis_id, "evaluation": "悪い評価です", "rationale": "根拠の説明文です十分な長さ"},
             },

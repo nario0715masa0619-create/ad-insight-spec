@@ -485,6 +485,10 @@ class LLMService:
 10. 一般論・抽象論を避け、実際の制作・運用にそのまま渡せる粒度で書く（誰が読んでも次のアクションが分かること）。
 11. 各文は簡潔に（description/impact/reason/evidence の各項目はいずれも1〜2文まで）。長文で説明するより、具体的な単語を選ぶことを優先する。
 12. summary.headline は「判定：一番の問題点」の定型形式で15〜20字程度の短い見出しにする（例: 「改善優先：信頼訴求が弱い」「要改善：CTAの具体性不足」「良好：訴求と信頼のバランスが良い」）。詳しい説明文は headline ではなく rationale に書く。headline を長文の説明文にしない。
+13. strength / weakness には必ず aspect（評価観点の短いラベル、2〜15字程度。例: 「トーンの印象」「証拠・差別化」「ペルソナ具体性」等）を書く。同一軸内で strength.aspect と weakness.aspect は必ず異なる観点にすること（同じ観点を強み・弱み双方に置いてはいけない。例: 信頼軸で strength.aspect が「信頼性」、weakness.aspect も「信頼性」は禁止）。
+14. strength は「今後も維持すべき良さ」だけを書き、weakness は strength とは別の観点で「改善すべき点」だけを書く。同じ観点について「良い面もあるが悪い面もある」という両論併記はしない。
+15. score とのバランス: score が4以上の軸は、weakness があっても軽微な注意点に留め、致命的な弱点は書かない。score が2以下の軸は、strength を「現状維持すべき最低限の良さ」1点に絞る（過度に持ち上げない）。score が3の軸は strength / weakness とも意味のある内容でよいが、13のとおり aspect は必ず別にする。
+16. summary.rationale は、axes のうち最もスコアが低い軸（同点の場合は appeal→creative→cta→trust→target の順で先の軸）の weakness.aspect を主題にして書く。他の軸の strength の内容を rationale に持ち込まない。
 
 【JSON 出力フォーマット（必須・これ以外の説明文は一切含めない。1軸分の例）】
 {{
@@ -500,6 +504,7 @@ class LLMService:
             "score": 4,
             "strength": {{
                 "target_element": "ファーストビューのキャッチコピー",
+                "aspect": "数字訴求の具体性",
                 "description": "『成約率2倍』という具体的な数字でペインポイントに直接応えている",
                 "reason": "具体的な数字は抽象的な訴求より信頼されやすく、意思決定を後押しするため",
                 "keep_reason": "この数字訴求は信頼感とCVRに直結するため、今後の改修でも必ず維持すること",
@@ -512,6 +517,7 @@ class LLMService:
             }},
             "weakness": {{
                 "target_element": "動画冒頭0〜3秒のテキスト",
+                "aspect": "冒頭フックの具体性",
                 "description": "抽象的な言い回しで、視聴維持につながっていない",
                 "reason": "冒頭3秒で具体的なペインポイントを提示しないと離脱が増えるのが一般的なベストプラクティスのため",
                 "impact": "スクロール離脱が増え、視聴完了率・CTRの両方を下げている",

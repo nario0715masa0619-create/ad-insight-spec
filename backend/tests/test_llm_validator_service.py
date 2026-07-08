@@ -197,6 +197,7 @@ class TestDecisionSupportValidation:
             "score": 3,
             "strength": {
                 "target_element": "ファーストビューのテキスト",
+                "aspect": "数字訴求の具体性",
                 "description": "広告文とLPのFVコピーが『成約率2倍』で完全一致している",
                 "reason": "具体的な数字による訴求は信頼されやすいため",
                 "keep_reason": "信頼感とCVRに直結するため今後も維持すべき",
@@ -209,6 +210,7 @@ class TestDecisionSupportValidation:
             },
             "weakness": {
                 "target_element": "動画冒頭0〜3秒のテキスト",
+                "aspect": "冒頭フックの具体性",
                 "description": "動画冒頭3秒のテキストが抽象的で視聴維持につながっていない",
                 "reason": "冒頭3秒で具体的なペインポイントを提示しないと離脱が増えるため",
                 "impact": "視聴完了率とCTRの両方を下げている",
@@ -250,6 +252,23 @@ class TestDecisionSupportValidation:
         assert isinstance(result, DecisionSupport)
         assert len(result.axes) == 5
         assert [a.axis for a in result.axes] == ["appeal", "creative", "cta", "trust", "target"]
+
+    def test_distinct_aspect_passes(self, validator, valid_data):
+        """strength.aspect と weakness.aspect が異なる観点であれば通過する"""
+        valid_data["axes"][0]["strength"]["aspect"] = "数字訴求の具体性"
+        valid_data["axes"][0]["weakness"]["aspect"] = "冒頭フックの具体性"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, DecisionSupport)
+
+    def test_same_aspect_in_strength_and_weakness_rejected(self, validator, valid_data):
+        """同一軸でstrength.aspectとweakness.aspectが完全一致する場合は矛盾として失敗する
+        （例: 信頼軸で『信頼性が強み』『信頼性が弱み』のような両論併記を防ぐ）"""
+        valid_data["axes"][0]["strength"]["aspect"] = "信頼性"
+        valid_data["axes"][0]["weakness"]["aspect"] = "信頼性"
+        result = validator.validate_decision_support(valid_data)
+        assert isinstance(result, LLMDecisionSupportValidationError)
+        assert result.error_code == "ITEM_VALIDATION_FAILED"
+        assert "aspect" in result.reason
 
     def test_missing_required_field(self, validator, valid_data):
         """summary/axes のいずれか欠落は失敗"""

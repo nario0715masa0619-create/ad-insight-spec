@@ -259,6 +259,17 @@ class LLMValidatorService:
             weakness = axis_block.weakness
             recommendation = axis_block.recommendation
 
+            # strength/weakness が同じ評価観点(aspect)を指していると、「強いのか弱いのか
+            # 分からない」矛盾になる（例: 信頼軸で strength.aspect=weakness.aspect=「信頼性」）。
+            # この完全一致チェックで検出し、既存のretry-with-feedbackループにそのまま乗せて
+            # 別観点に分離し直させる。
+            if strength.aspect.strip() == weakness.aspect.strip():
+                errors.append(
+                    f"axis {axis_block.axis}: strength/weaknessが同じaspect "
+                    f"'{strength.aspect}' を指しています（別の観点に分離してください）"
+                )
+                continue
+
             abstract_found = [
                 w for w in self.ABSTRACT_WORDS
                 if w in strength.description or w in strength.reason
