@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import time
+import html as html_module
 from datetime import datetime
 
 
@@ -655,18 +656,154 @@ def render_video_cuts_missing_notice(tab_key: str, asset_id: str, video_cuts_err
                 st.code(internal_reason, language=None)
 
 
+def format_mmss(seconds) -> str:
+    """秒数を MM:SS 形式にフォーマットする（人が読む表示用。内部では秒数のまま保持する）。"""
+    if seconds is None:
+        return "--:--"
+    total = max(0, int(round(seconds)))
+    m, s = divmod(total, 60)
+    return f"{m:02d}:{s:02d}"
+
+
+# ===== カットの役割タグ → 色・アイコンの対応 =====
+# role_tag はLLMの自由記述（厳密なEnumではない）なので、既知の代表カテゴリに
+# 部分一致でマッピングし、当てはまらないものは「その他」に畳み込む
+# （固有の色を持つカテゴリを無制限に増やさない）。
+# 色は dataviz スキルの検証済みカテゴリカルパレットから採用し、
+# light/dark 両方で node scripts/validate_palette.js による検証を通過済み。
+ROLE_TAG_STYLES = {
+    "hook": {"label": "Hook", "icon": "🪝", "light": "#2a78d6", "dark": "#3987e5"},
+    "benefit": {"label": "ベネフィット提示", "icon": "💡", "light": "#1baf7a", "dark": "#199e70"},
+    "trust": {"label": "証拠・信頼形成", "icon": "🤝", "light": "#eda100", "dark": "#c98500"},
+    "cta": {"label": "CTA", "icon": "📣", "light": "#008300", "dark": "#008300"},
+    "other": {"label": "その他", "icon": "⬜", "light": "#898781", "dark": "#898781"},
+}
+
+
+def _role_tag_style_key(role_tag) -> str:
+    t = (role_tag or "").lower()
+    if "hook" in t:
+        return "hook"
+    if "ベネフィット" in t or "benefit" in t:
+        return "benefit"
+    if "証拠" in t or "信頼" in t or "trust" in t:
+        return "trust"
+    if "cta" in t:
+        return "cta"
+    return "other"
+
+
+def render_video_composition_header(cuts: list):
+    """
+    動画の尺・カット数・Hook位置を一目で把握できるヘッダー。
+    タイムラインバーは各カットの長さに比例した幅・役割タグ別の色分けで構成する。
+    目的はテンポ・構成の把握であり、再生機能は持たない。
+    """
+    if not cuts:
+        return
+
+    total_duration = max((c.get("end_seconds") or 0) for c in cuts)
+    cut_count = len(cuts)
+    hook_cut = next(
+        (c for c in cuts if _role_tag_style_key(c.get("role_tag")) == "hook"),
+        cuts[0],
+    )
+    hook_start = hook_cut.get("start_seconds")
+    hook_within_3s = hook_start is not None and hook_start < 3.0
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.caption("動画の長さ")
+        st.markdown(f"#### {format_mmss(total_duration)}")
+    with col2:
+        st.caption("カット数")
+        st.markdown(f"#### {cut_count}")
+    with col3:
+        st.caption("Hookの位置")
+        hook_range = f"{format_mmss(hook_start)}〜{format_mmss(hook_cut.get('end_seconds'))}"
+        st.markdown(f"#### {'✅' if hook_within_3s else '⚠️'} {hook_range}")
+        if not hook_within_3s:
+            st.caption("冒頭3秒を超えています")
+
+    # ===== タイムラインバー =====
+    segment_tags = []
+    for c in cuts:
+        start = c.get("start_seconds") or 0
+        end = c.get("end_seconds") or start
+        duration = max(end - start, 0.1)
+        style_key = _role_tag_style_key(c.get("role_tag"))
+        style = ROLE_TAG_STYLES[style_key]
+        tooltip = html_module.escape(
+            f"{c.get('cut_id', '')}: {format_mmss(start)}〜{format_mmss(end)}（{c.get('role_tag', style['label'])}）",
+            quote=True,
+        )
+        segment_tags.append(
+            f'<div class="video-timeline-segment" '
+            f'style="flex: {duration} 0 0; background: var(--role-{style_key});" '
+            f'title="{tooltip}">{style["icon"]}</div>'
+        )
+
+    light_vars = "; ".join(f"--role-{k}: {v['light']}" for k, v in ROLE_TAG_STYLES.items())
+    dark_vars = "; ".join(f"--role-{k}: {v['dark']}" for k, v in ROLE_TAG_STYLES.items())
+
+    st.markdown(
+        f"""
+        <style>
+        .video-timeline-wrap {{ {light_vars} }}
+        @media (prefers-color-scheme: dark) {{
+            .video-timeline-wrap {{ {dark_vars} }}
+        }}
+        .video-timeline-bar {{
+            display: flex;
+            width: 100%;
+            height: 32px;
+            border-radius: 6px;
+            overflow: hidden;
+            gap: 2px;
+        }}
+        .video-timeline-segment {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+            min-width: 4px;
+        }}
+        </style>
+        <div class="video-timeline-wrap">
+          <div class="video-timeline-bar">{''.join(segment_tags)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 凡例（登場した役割タグのみ、初出のカードの実際のテキストを表示）
+    seen = set()
+    legend_parts = []
+    for c in cuts:
+        key = _role_tag_style_key(c.get("role_tag"))
+        if key in seen:
+            continue
+        seen.add(key)
+        legend_parts.append(f"{ROLE_TAG_STYLES[key]['icon']} {c.get('role_tag') or ROLE_TAG_STYLES[key]['label']}")
+    st.caption("　".join(legend_parts))
+
+
 def render_video_cut_card(cut: dict):
-    """カット1件分のカード表示（時間範囲・役割・要約・強み/問題点・改善提案・根拠）。"""
+    """カット1件分のカード表示（時間範囲・長さ・役割・要約・強み/問題点・改善提案・根拠）。"""
     start = cut.get("start_seconds")
     end = cut.get("end_seconds")
-    time_range = f"{start:.1f}〜{end:.1f}秒" if start is not None and end is not None else "時間範囲不明"
+    has_range = start is not None and end is not None
+    time_range = f"{format_mmss(start)}〜{format_mmss(end)}" if has_range else "時間範囲不明"
+    duration_text = f"（{end - start:.1f}秒）" if has_range else ""
     # 最初の3秒以内から始まるカットは Hook として視覚的に強調する
     is_hook = start is not None and start < 3.0
     title_prefix = "🔥 " if is_hook else ""
+    style = ROLE_TAG_STYLES[_role_tag_style_key(cut.get("role_tag"))]
 
     with st.container(border=True):
-        st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`")
-        st.write(f"**役割**: {cut.get('role_tag', 'N/A')}")
+        st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`{duration_text}")
+        st.write(f"**役割**: {style['icon']} {cut.get('role_tag', 'N/A')}")
         st.write(cut.get("summary", ""))
         strength_or_issue = cut.get("strength_or_issue")
         if strength_or_issue:
@@ -684,6 +821,8 @@ def render_video_cuts(video_cuts: dict):
         return
     st.markdown("### 🎬 カット別分析")
     st.caption("シーン切り替え・構図変化を目安にした、ざっくりしたカット単位の分析です。")
+    render_video_composition_header(cuts)
+    st.divider()
     for cut in cuts:
         render_video_cut_card(cut)
 
