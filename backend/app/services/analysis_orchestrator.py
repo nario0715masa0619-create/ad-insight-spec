@@ -336,17 +336,40 @@ class AnalysisOrchestrator:
                         model=llm_model,
                     )
 
-                improvements_result = improvements_future.result()
+                # 各futureの.result()は個別にfail-soft化する。いずれか1つのfutureで
+                # 予期しない例外（ネットワーク瞬断・Threadプール内部エラー等、各生成
+                # メソッド自身のtry/exceptで捕捉しきれない類の例外）が発生した場合、
+                # ここで受け止めずに外側（_step_llm 全体）の except まで伝播すると
+                # self.llm_result が丸ごと空になり、既に成功している他の結果
+                # （improvements/decision_support/video_cuts）まで巻き添えで消えてしまう。
+                # 3つの生成呼び出しは互いに独立した機能であり、1つの失敗が他の
+                # 成功結果を道連れにしてはならないため、それぞれ個別のtry/exceptで
+                # 受け止める（video_cutsは元々この保護があったが、improvements/
+                # decision_supportには無く非対称だったため揃える）。
+                from app.schemas.llm_response import LLMImprovementValidationError as _ImpErr
+                try:
+                    improvements_result = improvements_future.result()
+                except Exception as e:
+                    logger.warning(f"Improvement comments generation failed unexpectedly (non-fatal): {str(e)}")
+                    improvements_result = _ImpErr(
+                        success=False,
+                        error_code="LLM_ERROR",
+                        reason=f"Improvement comments generation failed unexpectedly: {str(e)}",
+                    )
                 logger.info(f"Step timing: 4b_analyze_creative_improvements (parallel) took {time.time() - parallel_start:.2f}s")
-                decision_support_result = decision_support_future.result()
+
+                from app.schemas.llm_response import LLMDecisionSupportValidationError as _DsErr
+                try:
+                    decision_support_result = decision_support_future.result()
+                except Exception as e:
+                    logger.warning(f"Decision support generation failed unexpectedly (non-fatal): {str(e)}")
+                    decision_support_result = _DsErr(
+                        success=False,
+                        error_code="LLM_ERROR",
+                        reason=f"Decision support generation failed unexpectedly: {str(e)}",
+                    )
                 logger.info(f"Step timing: 4c_generate_decision_support (parallel) took {time.time() - parallel_start:.2f}s")
 
-                # video_cuts_future.result() で万一未捕捉の例外が上がると、この
-                # try ブロックの外側（_step_llm 全体）の except に落ちて
-                # self.llm_result が丸ごと空になり、既に成功している
-                # improvements/decision_support まで巻き添えで消えてしまう。
-                # カット別分析はあくまで付加機能であり、全体分析を道連れに
-                # してはならないため、ここだけ個別に fail-soft で受け止める。
                 video_cuts_result = None
                 if video_cuts_future:
                     try:
