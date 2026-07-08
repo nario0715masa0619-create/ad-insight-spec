@@ -807,7 +807,7 @@ def render_video_composition_header(cuts: list, video_summary: dict = None):
 
 
 def render_video_cut_card(cut: dict):
-    """カット1件分のカード表示（時間範囲・長さ・役割・要約・強み/問題点・改善提案・根拠）。"""
+    """カット1件分のカード表示（時間範囲・長さ・役割・要約・このカットの評価・改善提案・この評価の根拠）。"""
     start = cut.get("start_seconds")
     end = cut.get("end_seconds")
     has_range = start is not None and end is not None
@@ -822,13 +822,18 @@ def render_video_cut_card(cut: dict):
         st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`{duration_text}")
         st.write(f"**役割**: {style['icon']} {style['label']}")
         st.write(cut.get("summary", ""))
+        # strength_or_issue は「強み」「問題点」のどちらか一方が入るフィールド（JSON構造は不変）。
+        # 表示側では「強み/問題点」という曖昧なラベルをやめ、内容がポジティブ/ネガティブ
+        # どちらでも違和感のない「このカットの評価」に統一する。
         strength_or_issue = cut.get("strength_or_issue")
         if strength_or_issue:
-            st.caption(f"💡 強み/問題点: {strength_or_issue}")
+            st.caption(f"💡 このカットの評価: {strength_or_issue}")
         st.write(f"**改善提案**: {cut.get('improvement_suggestion', 'N/A')}")
+        # evidence は単独の「根拠」だと何に対する根拠か伝わらないため、
+        # 直前の評価（このカットの評価）に対する根拠であることが一読でわかるようにする。
         evidence = cut.get("evidence")
         if evidence:
-            st.caption(f"🔍 根拠: {evidence}")
+            st.caption(f"🔍 この評価の根拠: {evidence}")
 
 
 def render_video_cuts(cuts: list, video_summary: dict = None):
