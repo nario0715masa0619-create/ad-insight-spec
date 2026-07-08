@@ -377,23 +377,57 @@ class AnalysisOrchestrator:
                 decision_support_data = _dump_model(decision_support_result)
                 decision_support_error = None
 
+            # ===== video_cuts（v1.0 最小構造化スキーマ）の組み立て =====
+            # diagnostics.video_cuts は schema_version/generation_status/video_summary/
+            # video_cuts を1つにまとめたブロック（docs/specs/video_cuts_json_schema_v1_0.md）。
+            # 画像フォーマットではこの概念自体が存在しないため None のまま。
             from app.schemas.llm_response import LLMVideoCutAnalysisValidationError
-            video_cuts_data = None
-            video_cuts_error = None
-            if video_cuts_result is not None:
-                if isinstance(video_cuts_result, LLMVideoCutAnalysisValidationError):
-                    video_cuts_error = _dump_model(video_cuts_result)
+            video_cuts_block = None
+            if format_type == "video_static":
+                if video_cuts_result is None:
+                    # カット検出自体が行われなかった（動画処理失敗等、fail-soft）
+                    video_cuts_block = {
+                        "schema_version": "1.0",
+                        "generation_status": {"status": "not_attempted", "error_code": None},
+                        "video_summary": None,
+                        "video_cuts": [],
+                    }
+                elif isinstance(video_cuts_result, LLMVideoCutAnalysisValidationError):
+                    video_cuts_block = {
+                        "schema_version": "1.0",
+                        "generation_status": {
+                            "status": "failed",
+                            "error_code": video_cuts_result.error_code,
+                        },
+                        "video_summary": None,
+                        "video_cuts": [],
+                    }
                 else:
-                    video_cuts_data = _dump_model(video_cuts_result)
+                    video_cuts_dump = _dump_model(video_cuts_result)
                     # LLMは時間範囲を出力しない（バックエンド側で確定済みのため）。
                     # ここで self.video_cuts（検出済みの start/end）を cut_id で
                     # マージしてから最終結果に格納する。
                     timing_by_cut_id = {c["cut_id"]: c for c in self.video_cuts}
-                    for cut in video_cuts_data.get("cuts", []):
+                    cuts_list = []
+                    for cut in video_cuts_dump.get("cuts", []):
                         timing = timing_by_cut_id.get(cut.get("cut_id"))
                         if timing:
                             cut["start_seconds"] = timing["start_seconds"]
                             cut["end_seconds"] = timing["end_seconds"]
+                        cuts_list.append(cut)
+                    total_duration = max(
+                        (c["end_seconds"] for c in cuts_list if c.get("end_seconds") is not None),
+                        default=0.0,
+                    )
+                    video_cuts_block = {
+                        "schema_version": "1.0",
+                        "generation_status": {"status": "success", "error_code": None},
+                        "video_summary": {
+                            "total_duration_seconds": total_duration,
+                            "cut_count": len(cuts_list),
+                        },
+                        "video_cuts": cuts_list,
+                    }
 
             self.llm_result = {
                 "creative_core": {
@@ -410,8 +444,7 @@ class AnalysisOrchestrator:
                 "improvements_error": improvements_error,
                 "decision_support": decision_support_data,
                 "decision_support_error": decision_support_error,
-                "video_cuts": video_cuts_data,
-                "video_cuts_error": video_cuts_error,
+                "video_cuts": video_cuts_block,
             }
             logger.info("LLM analysis complete")
         except Exception as e:
