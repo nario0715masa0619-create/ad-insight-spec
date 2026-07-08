@@ -361,7 +361,9 @@ class LLMValidatorService:
 
             abstract_found = [
                 w for w in self.ABSTRACT_WORDS
-                if w in cut.summary or w in cut.strength_or_issue or w in cut.improvement_suggestion
+                if w in cut.summary
+                or w in (cut.strength_or_issue or "")
+                or w in cut.improvement_suggestion
             ]
             if abstract_found:
                 errors.append(f"cut {cut.cut_id}: contains abstract words {abstract_found}")

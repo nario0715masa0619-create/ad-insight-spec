@@ -254,14 +254,47 @@ class LLMResponseSchema(BaseModel):
 # （VideoService.detect_cuts）側で確定済みのため、LLMには再生成させず
 # cut_id で紐付けるだけにする（出力項目を絞り、精度とレイテンシを稼ぐ）。
 
+VIDEO_CUT_ROLE_TAGS = ["hook", "benefit", "proof", "trust", "cta", "other"]
+
+# role_tag はLLM自由記述・旧データ双方から入ってくるため、内部語彙
+# （hook/benefit/proof/trust/cta/other）へ正規化してから保存する。
+# キーは小文字化して比較するため、日本語キーも大文字小文字の影響を受けない。
+_ROLE_TAG_NORMALIZATION_MAP = {
+    "hook": "hook",
+    "benefit": "benefit",
+    "ベネフィット": "benefit",
+    "ベネフィット提示": "benefit",
+    "proof": "proof",
+    "証拠": "proof",
+    "証拠提示": "proof",
+    "trust": "trust",
+    "信頼": "trust",
+    "信頼形成": "trust",
+    "証拠・信頼形成": "proof",  # 旧: 証拠と信頼を1カテゴリにまとめていた値 → proofへ寄せる
+    "cta": "cta",
+    "other": "other",
+    "その他": "other",
+}
+
+
+def normalize_role_tag(raw: Optional[str]) -> str:
+    """role_tag を内部語彙（hook/benefit/proof/trust/cta/other）へ正規化する。未知の値は other。"""
+    if not raw:
+        return "other"
+    return _ROLE_TAG_NORMALIZATION_MAP.get(raw.strip().lower(), "other")
+
+
 class VideoCutContent(BaseModel):
     """
     1カット分の分析結果。
 
-    cut_id/role_tag/summary/strength_or_issue/improvement_suggestion/evidence
+    cut_id/role_tag/summary/improvement_suggestion/strength_or_issue/evidence
     はLLM生成。start_seconds/end_secondsはLLMには生成させず（バックエンドの
     VideoService.detect_cutsで確定済み）、validate_video_cuts通過後にオーケ
     ストレーター側でcut_idを突き合わせてマージする。
+
+    strength_or_issue/evidence は段階1UIの必須表示項目には含まれないが、
+    詳細表示・将来拡張のため保存自体は継続する（optional）。
     """
 
     cut_id: str = Field(..., description="バックエンド側で採番済みのカットID（例: cut_1）と一致必須")
@@ -269,16 +302,20 @@ class VideoCutContent(BaseModel):
     end_seconds: Optional[float] = Field(default=None, description="カット終了秒（バックエンドでマージ）")
     role_tag: str = Field(
         ...,
-        description="このカットの役割（例: Hook/ベネフィット提示/証拠/信頼/CTA 等。自由記述）",
-        min_length=1,
-        max_length=20,
+        description=f"内部語彙のいずれかへ正規化される: {VIDEO_CUT_ROLE_TAGS}",
     )
     summary: str = Field(..., description="画面内容の短い要約", min_length=5, max_length=150)
-    strength_or_issue: str = Field(..., description="このカットの強みまたは問題点（1〜2行）", min_length=5, max_length=200)
     improvement_suggestion: str = Field(..., description="具体的な改善提案（1〜2行）", min_length=5, max_length=200)
-    evidence: Optional[str] = Field(
-        default=None, description="簡単な根拠（なぜそう判断したか）", max_length=150
+    strength_or_issue: Optional[str] = Field(
+        default=None, description="[optional] このカットの強みまたは問題点（1〜2行）", max_length=200
     )
+    evidence: Optional[str] = Field(
+        default=None, description="[optional] 簡単な根拠（なぜそう判断したか）", max_length=150
+    )
+
+    @validator("role_tag", pre=True)
+    def _normalize_role_tag_value(cls, v):
+        return normalize_role_tag(v)
 
 
 class VideoCutAnalysis(BaseModel):
@@ -293,3 +330,52 @@ class LLMVideoCutAnalysisValidationError(BaseModel):
     success: bool = False
     error_code: str = Field(..., description="エラーコード")
     reason: str = Field(..., description="エラー理由")
+
+
+# ===== 保存・再表示用の最小構造化スキーマ（v1.0） =====
+# UIの「段階1」表示（動画尺・カット数・各カット開始/終了・役割タグ・要約・改善提案）を
+# そのまま再現するために必要な項目だけに絞った最小スキーマ。詳細は
+# docs/specs/video_cuts_json_schema_v1_0.md を参照。
+# diagnostics.video_cuts はこの VideoCutsBlock そのもの（内部の video_cuts フィールドが
+# カットの配列を持つ）。generation_status に success/failed/not_attempted を必ず持たせ、
+# 旧来の video_cuts / video_cuts_error という2フィールド並存パターンを1つに統合する。
+
+VIDEO_CUTS_SCHEMA_VERSION = "1.0"
+# バージョン方針（詳細は docs/specs/video_cuts_json_schema_v1_0.md の「role_tagの語彙追加ルール」章）:
+# - VIDEO_CUT_ROLE_TAGS への値の「追加」は non-breaking change（schema_version 更新不要。
+#   ただしフロントエンド ROLE_TAG_STYLES への対応する色・アイコン追加を忘れないこと）。
+# - 必須フィールドの削除・改名・型変更、既存role_tag値の意味変更は breaking change。
+#   その場合は VIDEO_CUTS_SCHEMA_VERSION を上げ、読み出し側で schema_version の値により
+#   分岐させること（現状は「generation_statusキーの有無」だけで新/旧を判定しているが、
+#   新形式が複数バージョンに増えたらこの判定では不十分になる）。
+
+VIDEO_CUTS_GENERATION_STATUSES = ["success", "failed", "not_attempted"]
+
+
+class VideoCutGenerationStatus(BaseModel):
+    """video_cuts 生成状況"""
+
+    status: str = Field(..., description=f"いずれか: {VIDEO_CUTS_GENERATION_STATUSES}")
+    error_code: Optional[str] = Field(default=None, description="status=failed の場合のみ値を持つ")
+
+    @validator("status")
+    def _status_must_be_known(cls, v):
+        if v not in VIDEO_CUTS_GENERATION_STATUSES:
+            raise ValueError(f"status must be one of {VIDEO_CUTS_GENERATION_STATUSES}, got '{v}'")
+        return v
+
+
+class VideoSummary(BaseModel):
+    """動画全体の要約（表示ヘッダ用）。status=success 以外では None。"""
+
+    total_duration_seconds: float = Field(..., ge=0)
+    cut_count: int = Field(..., ge=0)
+
+
+class VideoCutsBlock(BaseModel):
+    """保存・再表示用の最小構造化ブロック（v1.0）。diagnostics.video_cuts の実体。"""
+
+    schema_version: str = Field(default=VIDEO_CUTS_SCHEMA_VERSION)
+    generation_status: VideoCutGenerationStatus = Field(..., description="生成状況")
+    video_summary: Optional[VideoSummary] = Field(default=None, description="status=success以外はnull")
+    video_cuts: List[VideoCutContent] = Field(default_factory=list, description="カットごとの分析結果")

@@ -28,8 +28,7 @@ from app.schemas.llm_response import (
     LLMImprovementValidationError,
     DecisionSupport,
     LLMDecisionSupportValidationError,
-    VideoCutAnalysis,
-    LLMVideoCutAnalysisValidationError,
+    VideoCutsBlock,
 )
 
 
@@ -488,14 +487,15 @@ class Diagnostics(BaseModel):
         description="意思決定支援生成失敗時のエラー情報"
     )
 
-    # ===== 新規: カット別分析（video_cuts、optional・動画のみ） =====
-    video_cuts: Optional[VideoCutAnalysis] = Field(
+    # ===== カット別分析（video_cuts、optional・動画のみ） =====
+    # v1.0 最小構造化スキーマ（docs/specs/video_cuts_json_schema_v1_0.md）。
+    # schema_version/generation_status/video_summary/video_cuts を1つのブロックにまとめる。
+    # 旧形式（{"cuts": [...]}単体 + 別フィールドのvideo_cuts_error）で保存済みの
+    # レコードは、GET時にこのモデルへ再検証されない（specs.pyのget_specはrecord.spec_data
+    # を生の dict のまま返す）ため、後方互換のためのデータ移行は不要。
+    video_cuts: Optional[VideoCutsBlock] = Field(
         default=None,
-        description="動画のカット別分析（シーン切り替え単位の役割・要約・改善提案）"
-    )
-    video_cuts_error: Optional[LLMVideoCutAnalysisValidationError] = Field(
-        default=None,
-        description="カット別分析生成失敗時のエラー情報"
+        description="動画のカット別分析（v1.0 最小構造化スキーマ）"
     )
 
     llm_model: Optional[str] = Field(None, description="LLM Model")

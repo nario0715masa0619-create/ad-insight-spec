@@ -635,9 +635,14 @@ VIDEO_CUTS_ERROR_EXPLANATION_DEFAULT = {
 }
 
 
-def render_video_cuts_missing_notice(tab_key: str, asset_id: str, video_cuts_error: dict):
-    """カット別分析が生成できなかった場合の理由説明ボックス（decision_supportと同じトーン）。"""
-    error_code = (video_cuts_error or {}).get("error_code")
+def render_video_cuts_missing_notice(tab_key: str, asset_id: str, error_code: str, internal_reason: str = None):
+    """
+    カット別分析が生成できなかった場合の理由説明ボックス（decision_supportと同じトーン）。
+
+    error_code/internal_reason は新形式（generation_status.error_code、reasonは無し）
+    ・旧形式（video_cuts_error.error_code/.reason）のどちらから来てもよいよう、
+    呼び出し側で正規化してから渡す。
+    """
     explanation = VIDEO_CUTS_ERROR_EXPLANATIONS.get(error_code, VIDEO_CUTS_ERROR_EXPLANATION_DEFAULT)
 
     with st.container(border=True):
@@ -645,7 +650,6 @@ def render_video_cuts_missing_notice(tab_key: str, asset_id: str, video_cuts_err
         st.write(f"**理由**: {explanation['reason']}")
         st.write(f"**次にお試しいただきたいこと**: {explanation['action']}")
 
-        internal_reason = (video_cuts_error or {}).get("reason")
         if internal_reason:
             with st.expander(
                 "詳細理由を見る",
@@ -666,44 +670,57 @@ def format_mmss(seconds) -> str:
 
 
 # ===== カットの役割タグ → 色・アイコンの対応 =====
-# role_tag はLLMの自由記述（厳密なEnumではない）なので、既知の代表カテゴリに
-# 部分一致でマッピングし、当てはまらないものは「その他」に畳み込む
-# （固有の色を持つカテゴリを無制限に増やさない）。
+# バックエンド側（llm_response.normalize_role_tag）で role_tag は内部語彙
+# （hook/benefit/proof/trust/cta/other）へ正規化されてから保存される。
+# 旧データはこの正規化を経ていない自由記述（例:「証拠・信頼形成」）のままなので、
+# ここでも部分一致によるフォールバックマッピングを残す（後方互換）。
 # 色は dataviz スキルの検証済みカテゴリカルパレットから採用し、
 # light/dark 両方で node scripts/validate_palette.js による検証を通過済み。
 ROLE_TAG_STYLES = {
     "hook": {"label": "Hook", "icon": "🪝", "light": "#2a78d6", "dark": "#3987e5"},
     "benefit": {"label": "ベネフィット提示", "icon": "💡", "light": "#1baf7a", "dark": "#199e70"},
-    "trust": {"label": "証拠・信頼形成", "icon": "🤝", "light": "#eda100", "dark": "#c98500"},
+    "proof": {"label": "証拠提示", "icon": "🧾", "light": "#eda100", "dark": "#c98500"},
+    "trust": {"label": "信頼形成", "icon": "🤝", "light": "#4a3aa7", "dark": "#9085e9"},
     "cta": {"label": "CTA", "icon": "📣", "light": "#008300", "dark": "#008300"},
     "other": {"label": "その他", "icon": "⬜", "light": "#898781", "dark": "#898781"},
 }
 
 
 def _role_tag_style_key(role_tag) -> str:
-    t = (role_tag or "").lower()
+    t = (role_tag or "").strip().lower()
+    if t in ROLE_TAG_STYLES:
+        # 新形式: バックエンドで正規化済みの内部語彙がそのまま入っている
+        return t
+    # 旧データ・自由記述からのフォールバックマッピング（後方互換）
     if "hook" in t:
         return "hook"
     if "ベネフィット" in t or "benefit" in t:
         return "benefit"
-    if "証拠" in t or "信頼" in t or "trust" in t:
+    if "証拠" in t or "proof" in t:
+        return "proof"
+    if "信頼" in t or "trust" in t:
         return "trust"
     if "cta" in t:
         return "cta"
     return "other"
 
 
-def render_video_composition_header(cuts: list):
+def render_video_composition_header(cuts: list, video_summary: dict = None):
     """
     動画の尺・カット数・Hook位置を一目で把握できるヘッダー。
     タイムラインバーは各カットの長さに比例した幅・役割タグ別の色分けで構成する。
     目的はテンポ・構成の把握であり、再生機能は持たない。
+
+    video_summary（新形式のみ存在）があればそちらの値を優先する
+    （カットが未整列・非連続でも表示側で再計算が不要になるため）。
     """
     if not cuts:
         return
 
-    total_duration = max((c.get("end_seconds") or 0) for c in cuts)
-    cut_count = len(cuts)
+    total_duration = (video_summary or {}).get("total_duration_seconds")
+    if total_duration is None:
+        total_duration = max((c.get("end_seconds") or 0) for c in cuts)
+    cut_count = (video_summary or {}).get("cut_count") or len(cuts)
     hook_cut = next(
         (c for c in cuts if _role_tag_style_key(c.get("role_tag")) == "hook"),
         cuts[0],
@@ -734,7 +751,7 @@ def render_video_composition_header(cuts: list):
         style_key = _role_tag_style_key(c.get("role_tag"))
         style = ROLE_TAG_STYLES[style_key]
         tooltip = html_module.escape(
-            f"{c.get('cut_id', '')}: {format_mmss(start)}〜{format_mmss(end)}（{c.get('role_tag', style['label'])}）",
+            f"{c.get('cut_id', '')}: {format_mmss(start)}〜{format_mmss(end)}（{style['label']}）",
             quote=True,
         )
         segment_tags.append(
@@ -777,7 +794,7 @@ def render_video_composition_header(cuts: list):
         unsafe_allow_html=True,
     )
 
-    # 凡例（登場した役割タグのみ、初出のカードの実際のテキストを表示）
+    # 凡例（登場した役割タグのみ、正規化後の日本語ラベルで表示）
     seen = set()
     legend_parts = []
     for c in cuts:
@@ -785,7 +802,7 @@ def render_video_composition_header(cuts: list):
         if key in seen:
             continue
         seen.add(key)
-        legend_parts.append(f"{ROLE_TAG_STYLES[key]['icon']} {c.get('role_tag') or ROLE_TAG_STYLES[key]['label']}")
+        legend_parts.append(f"{ROLE_TAG_STYLES[key]['icon']} {ROLE_TAG_STYLES[key]['label']}")
     st.caption("　".join(legend_parts))
 
 
@@ -803,7 +820,7 @@ def render_video_cut_card(cut: dict):
 
     with st.container(border=True):
         st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`{duration_text}")
-        st.write(f"**役割**: {style['icon']} {cut.get('role_tag', 'N/A')}")
+        st.write(f"**役割**: {style['icon']} {style['label']}")
         st.write(cut.get("summary", ""))
         strength_or_issue = cut.get("strength_or_issue")
         if strength_or_issue:
@@ -814,14 +831,13 @@ def render_video_cut_card(cut: dict):
             st.caption(f"🔍 根拠: {evidence}")
 
 
-def render_video_cuts(video_cuts: dict):
-    """カット別分析セクション全体（動画分析結果の下部に表示）。"""
-    cuts = (video_cuts or {}).get("cuts", []) or []
+def render_video_cuts(cuts: list, video_summary: dict = None):
+    """カット別分析セクション全体（動画分析結果の下部に表示）。cutsは正規化済みカットのリスト。"""
     if not cuts:
         return
     st.markdown("### 🎬 カット別分析")
     st.caption("シーン切り替え・構図変化を目安にした、ざっくりしたカット単位の分析です。")
-    render_video_composition_header(cuts)
+    render_video_composition_header(cuts, video_summary)
     st.divider()
     for cut in cuts:
         render_video_cut_card(cut)
@@ -905,13 +921,39 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
         render_legacy_improvements(tab_key, asset_id, improvements, improvements_error)
 
     # ===== カット別分析（video_cuts、動画のみ） =====
+    # diagnostics.video_cuts は新形式（v1.0、schema_version/generation_status/
+    # video_summary/video_cutsを1ブロックにまとめたもの）と旧形式
+    # （{"cuts": [...]} 単体 + 別フィールドの video_cuts_error）の両方があり得る
+    # （旧レコードはGET時に新スキーマへ再検証されないため、後方互換として両対応する）。
+    #
+    # 現時点では schema_version は "1.0" の1種類しかなく、ここでは
+    # 「generation_status キーを持つか(=新形式)/持たないか(=旧形式)」だけで
+    # 分岐している。将来 schema_version を上げる変更をする場合は、
+    # この判定を video_cuts_raw.get("schema_version") の値による分岐へ拡張すること
+    # （新形式が2種類以上に増えた時点で、キーの有無だけの判定は破綻する）。
+    # 詳細: docs/specs/video_cuts_json_schema_v1_0.md
     if creative_core.get("format") == "video_static":
-        video_cuts = diagnostics.get("video_cuts")
-        video_cuts_error = diagnostics.get("video_cuts_error")
-        if video_cuts and video_cuts.get("cuts"):
-            render_video_cuts(video_cuts)
-        elif video_cuts_error:
-            render_video_cuts_missing_notice(tab_key, asset_id, video_cuts_error)
+        video_cuts_raw = diagnostics.get("video_cuts")
+        if isinstance(video_cuts_raw, dict) and "generation_status" in video_cuts_raw:
+            status = (video_cuts_raw.get("generation_status") or {}).get("status")
+            error_code = (video_cuts_raw.get("generation_status") or {}).get("error_code")
+            cuts = video_cuts_raw.get("video_cuts") or []
+            if status == "success" and cuts:
+                render_video_cuts(cuts, video_cuts_raw.get("video_summary"))
+            elif status == "failed":
+                render_video_cuts_missing_notice(tab_key, asset_id, error_code)
+            # not_attempted: カット別分析自体が未実施のため何も表示しない
+        elif isinstance(video_cuts_raw, dict) and video_cuts_raw.get("cuts"):
+            render_video_cuts(video_cuts_raw.get("cuts") or [])
+        else:
+            video_cuts_error = diagnostics.get("video_cuts_error")
+            if video_cuts_error:
+                render_video_cuts_missing_notice(
+                    tab_key,
+                    asset_id,
+                    video_cuts_error.get("error_code"),
+                    video_cuts_error.get("reason"),
+                )
 
     # ===== 補助情報（折りたたみ）: CreativeCore / 改善コメント原文 / LLMメタデータ / 完全なJSON =====
     visuals = creative_core.get("visuals", {}) or {}
