@@ -436,17 +436,26 @@ def render_evidence(evidence: dict):
         st.caption(evidence.get("rationale", "N/A"))
 
 
-def render_axis_block(axis: dict):
-    """1軸分（強み・弱み・改善提案の3点セット必須）の表示"""
+def render_axis_block(tab_key: str, asset_id: str, axis: dict, expanded: bool = False):
+    """
+    1軸分（強み・弱み・改善提案の3点セット必須）の表示。
+
+    ヘッダー（軸名・スコア・改善余地の一言サマリ）は常時表示し、詳細
+    （強み/弱み/改善提案の本文）はst.expanderでクリック開閉するアコーディオン
+    にする（縦に長くなりすぎる診断結果画面の一覧性を上げるため）。
+    """
     axis_id = axis.get("axis")
     score = axis.get("score")
     strength = axis.get("strength", {}) or {}
     weakness = axis.get("weakness", {}) or {}
     recommendation = axis.get("recommendation", {}) or {}
 
-    with st.container(border=True):
-        st.markdown(f"### {axis_label(axis_id)}　{score_stars(score)}（{score if score is not None else '?'}/5）")
+    weakness_aspect = weakness.get("aspect")
+    header = f"{axis_label(axis_id)}　{score_stars(score)}（{score if score is not None else '?'}/5）"
+    if weakness_aspect:
+        header += f"　—　改善余地: {weakness_aspect}"
 
+    with st.expander(header, expanded=expanded, key=widget_key(tab_key, "expander_axis", asset_id, axis_id)):
         strength_aspect = strength.get("aspect")
         st.markdown(f"**🟢 強み（{strength_aspect}）**" if strength_aspect else "**🟢 強み**")
         st.write(f"対象: {strength.get('target_element', 'N/A')}")
@@ -459,7 +468,6 @@ def render_axis_block(axis: dict):
             st.caption(f"🔒 維持すべき理由: {keep_reason}")
         render_evidence(strength.get("evidence"))
 
-        weakness_aspect = weakness.get("aspect")
         st.markdown(f"**🔴 弱み（{weakness_aspect}）**" if weakness_aspect else "**🔴 弱み**")
         st.write(f"対象: {weakness.get('target_element', 'N/A')}")
         st.write(weakness.get("description", ""))
@@ -480,14 +488,26 @@ def render_axis_block(axis: dict):
             st.caption(f"📈 期待効果: {expected_effect}")
 
 
-def render_decision_support_axes(decision_support: dict):
+def render_decision_support_axes(tab_key: str, asset_id: str, decision_support: dict):
     """axes形式の decision_support 本体（5軸を固定順で表示）"""
     render_overall_score_card(decision_support)
     axes_by_id = {a.get("axis"): a for a in decision_support.get("axes", []) or []}
+
+    # デフォルトはすべて折りたたみ。ただし最もスコアが低い軸（同点はAXIS_ORDER先頭を優先）
+    # だけ初期状態で開いておき、最初に見るべき箇所を自然に示す。
+    lowest_axis_id = None
+    lowest_score = None
+    for axis_id in AXIS_ORDER:
+        axis = axes_by_id.get(axis_id)
+        if axis and axis.get("score") is not None:
+            if lowest_score is None or axis["score"] < lowest_score:
+                lowest_score = axis["score"]
+                lowest_axis_id = axis_id
+
     for axis_id in AXIS_ORDER:
         axis = axes_by_id.get(axis_id)
         if axis:
-            render_axis_block(axis)
+            render_axis_block(tab_key, asset_id, axis, expanded=(axis_id == lowest_axis_id))
 
 
 def render_decision_support_diff(diff: dict):
@@ -812,8 +832,15 @@ def render_video_composition_header(cuts: list, video_summary: dict = None):
     st.caption("　".join(legend_parts))
 
 
-def render_video_cut_card(cut: dict):
-    """カット1件分のカード表示（時間範囲・長さ・役割・要約・このカットの評価・改善提案・この評価の根拠）。"""
+def render_video_cut_card(tab_key: str, asset_id: str, cut: dict):
+    """
+    カット1件分のカード表示。
+
+    ヘッダー（カット番号・時間範囲・役割）は常時表示し、詳細（要約・評価・
+    根拠・改善提案）はst.expanderでクリック開閉するアコーディオンにする
+    （カット数が多い動画でもヘッダー一覧をスクロールしながら気になるカット
+    だけ開けるようにするため）。
+    """
     start = cut.get("start_seconds")
     end = cut.get("end_seconds")
     has_range = start is not None and end is not None
@@ -823,10 +850,11 @@ def render_video_cut_card(cut: dict):
     is_hook = start is not None and start < 3.0
     title_prefix = "🔥 " if is_hook else ""
     style = ROLE_TAG_STYLES[_role_tag_style_key(cut.get("role_tag"))]
+    cut_id = cut.get("cut_id", "カット")
 
-    with st.container(border=True):
-        st.markdown(f"#### {title_prefix}{cut.get('cut_id', 'カット')}　`{time_range}`{duration_text}")
-        st.write(f"**役割**: {style['icon']} {style['label']}")
+    header = f"{title_prefix}{cut_id}　{time_range}{duration_text}　{style['icon']} {style['label']}"
+
+    with st.expander(header, expanded=False, key=widget_key(tab_key, "expander_cut", asset_id, cut_id)):
         st.write(cut.get("summary", ""))
         # strength_or_issue は「強み」「問題点」のどちらか一方が入るフィールド（JSON構造は不変）。
         # 表示側では「強み/問題点」という曖昧なラベルをやめ、内容がポジティブ/ネガティブ
@@ -842,7 +870,7 @@ def render_video_cut_card(cut: dict):
             st.caption(f"🔍 この評価の根拠: {evidence}")
 
 
-def render_video_cuts(cuts: list, video_summary: dict = None):
+def render_video_cuts(tab_key: str, asset_id: str, cuts: list, video_summary: dict = None):
     """カット別分析セクション全体（動画分析結果の下部に表示）。cutsは正規化済みカットのリスト。"""
     if not cuts:
         return
@@ -851,7 +879,7 @@ def render_video_cuts(cuts: list, video_summary: dict = None):
     render_video_composition_header(cuts, video_summary)
     st.divider()
     for cut in cuts:
-        render_video_cut_card(cut)
+        render_video_cut_card(tab_key, asset_id, cut)
 
 
 def render_legacy_improvements(tab_key: str, asset_id: str, improvements: dict, improvements_error: dict):
@@ -914,7 +942,7 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
     #   2. 旧形式（axesなし、strengths/weaknessesあり）: 従来のフラット表示（データ移行不要）
     #   3. decision_support自体が無い: 従来の改善コメント表示
     if decision_support and decision_support.get("axes"):
-        render_decision_support_axes(decision_support)
+        render_decision_support_axes(tab_key, asset_id, decision_support)
         render_decision_support_diff(diagnostics.get("decision_support_diff"))
     elif decision_support:
         render_decision_summary(decision_support.get("summary", {}) or {})
@@ -950,12 +978,12 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
             error_code = (video_cuts_raw.get("generation_status") or {}).get("error_code")
             cuts = video_cuts_raw.get("video_cuts") or []
             if status == "success" and cuts:
-                render_video_cuts(cuts, video_cuts_raw.get("video_summary"))
+                render_video_cuts(tab_key, asset_id, cuts, video_cuts_raw.get("video_summary"))
             elif status == "failed":
                 render_video_cuts_missing_notice(tab_key, asset_id, error_code)
             # not_attempted: カット別分析自体が未実施のため何も表示しない
         elif isinstance(video_cuts_raw, dict) and video_cuts_raw.get("cuts"):
-            render_video_cuts(video_cuts_raw.get("cuts") or [])
+            render_video_cuts(tab_key, asset_id, video_cuts_raw.get("cuts") or [])
         else:
             video_cuts_error = diagnostics.get("video_cuts_error")
             if video_cuts_error:
