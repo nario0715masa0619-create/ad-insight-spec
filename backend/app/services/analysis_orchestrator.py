@@ -61,6 +61,11 @@ class AnalysisOrchestrator:
         # 全体動画用の VideoService とは別インスタンスで管理し、run() の最後に明示的に破棄する。
         self.video_cuts: list = []
         self._cut_video_service = None
+        # 5軸診断のテキスト入力モード判定用（動画のみ）。
+        # ocr_coverage_ratio: video_cutsのOCR結果から算出した、テロップの動画尺被覆率。
+        # asr_result: ocr_coverage_ratio が閾値未満の場合のみ ASRService.transcribe を呼んだ結果。
+        self.ocr_coverage_ratio: float = 0.0
+        self.asr_result: Optional[Dict[str, Any]] = None
         self.lp_result: Optional[Dict[str, Any]] = None
         self.llm_result: Optional[Dict[str, Any]] = None
         self.kpi_data: Optional[Dict[str, Any]] = None
@@ -237,6 +242,34 @@ class AnalysisOrchestrator:
             except Exception as e:
                 logger.warning(f"Video cut detection failed (non-fatal): {str(e)}")
                 self.video_cuts = []
+
+            # 5軸診断のテキスト入力モード判定用: video_cutsのOCR結果から
+            # テロップの動画尺被覆率を計算し、閾値未満の場合のみASRを呼ぶ
+            # （閾値以上＝テロップが十分にある動画では、コスト・レイテンシ抑制の
+            # ためWhisper API自体を呼ばない＝既存動作を変えない）。失敗しても
+            # 5軸診断自体はテキストモード判定なしでフォールバックできるため、
+            # fail-softで無視する。
+            try:
+                from app.services.text_mode_classifier import (
+                    compute_ocr_coverage_ratio,
+                    OCR_COVERAGE_THRESHOLD,
+                )
+                duration = (self.video_result or {}).get("duration_seconds", 0)
+                self.ocr_coverage_ratio = compute_ocr_coverage_ratio(self.video_cuts, duration)
+                if self.ocr_coverage_ratio < OCR_COVERAGE_THRESHOLD and video_file_path:
+                    from app.services.asr_service import ASRService
+                    self.asr_result = ASRService.transcribe(video_file_path)
+                    logger.info(
+                        f"ASR transcription attempted (ocr_coverage_ratio={self.ocr_coverage_ratio:.2f}): "
+                        f"success={self.asr_result.get('success')}"
+                    )
+                else:
+                    logger.info(
+                        f"ASR transcription skipped (ocr_coverage_ratio={self.ocr_coverage_ratio:.2f} "
+                        f">= {OCR_COVERAGE_THRESHOLD})"
+                    )
+            except Exception as e:
+                logger.warning(f"Text-mode classification / ASR failed (non-fatal): {str(e)}")
         else:
             self.video_result = {}
         
@@ -310,6 +343,24 @@ class AnalysisOrchestrator:
 
             cc_dict = _dump_model(llm_result.creative_core) if llm_result.creative_core else {}
 
+            # 5軸診断（decision_support）のテキスト入力モード判定。
+            # 画像フォーマットではこの判定自体を行わず、常にTEXT_MODE_RICH相当
+            # （asr_textなし）で呼ぶ＝既存動作を完全に維持する。動画のみ、
+            # _step_content_analysisで計算済みのocr_coverage_ratio/asr_resultから
+            # モードを決定する。
+            from app.services.text_mode_classifier import (
+                classify_text_mode,
+                TEXT_MODE_RICH,
+                TEXT_MODE_INSUFFICIENT,
+            )
+            if format_type == "video_static":
+                text_mode = classify_text_mode(self.ocr_coverage_ratio, self.asr_result)
+                asr_text = (self.asr_result or {}).get("asr_text") if text_mode != TEXT_MODE_INSUFFICIENT else None
+            else:
+                text_mode = TEXT_MODE_RICH
+                asr_text = None
+            logger.info(f"Decision support text_mode: {text_mode}")
+
             # P0 改善コメント生成・意思決定支援ブロック生成・（動画のみ）カット別分析は
             # いずれも独立した呼び出しであり、互いの結果には影響しない（fail-soft）。
             # それぞれ最大3回までリトライするため直列実行だと合計待ち時間が長くなり
@@ -323,11 +374,18 @@ class AnalysisOrchestrator:
                     creative_analysis=cc_dict,
                     model=llm_model,
                 )
-                decision_support_future = executor.submit(
-                    LLMService.generate_decision_support,
-                    creative_analysis=cc_dict,
-                    model=llm_model,
-                )
+                # TEXT_MODE_INSUFFICIENT（明示テキストがほぼ無い動画）では、
+                # LLM呼び出し自体を行わずスキップする（コスト0、下の.result()
+                # 取得部分でその場でエラー情報を構築する）。
+                decision_support_future = None
+                if text_mode != TEXT_MODE_INSUFFICIENT:
+                    decision_support_future = executor.submit(
+                        LLMService.generate_decision_support,
+                        creative_analysis=cc_dict,
+                        text_mode=text_mode,
+                        asr_text=asr_text,
+                        model=llm_model,
+                    )
                 video_cuts_future = None
                 if self.video_cuts:
                     video_cuts_future = executor.submit(
@@ -359,15 +417,26 @@ class AnalysisOrchestrator:
                 logger.info(f"Step timing: 4b_analyze_creative_improvements (parallel) took {time.time() - parallel_start:.2f}s")
 
                 from app.schemas.llm_response import LLMDecisionSupportValidationError as _DsErr
-                try:
-                    decision_support_result = decision_support_future.result()
-                except Exception as e:
-                    logger.warning(f"Decision support generation failed unexpectedly (non-fatal): {str(e)}")
+                if decision_support_future is None:
+                    # TEXT_MODE_INSUFFICIENT: LLMを呼ばずにその場でエラー情報を構築
                     decision_support_result = _DsErr(
                         success=False,
-                        error_code="LLM_ERROR",
-                        reason=f"Decision support generation failed unexpectedly: {str(e)}",
+                        error_code="INSUFFICIENT_TEXT_SOURCE",
+                        reason=(
+                            "画面上テキスト（テロップ）も音声の文字起こし（ASR）も十分な量が"
+                            "検出されなかったため、5軸診断をスキップしました。"
+                        ),
                     )
+                else:
+                    try:
+                        decision_support_result = decision_support_future.result()
+                    except Exception as e:
+                        logger.warning(f"Decision support generation failed unexpectedly (non-fatal): {str(e)}")
+                        decision_support_result = _DsErr(
+                            success=False,
+                            error_code="LLM_ERROR",
+                            reason=f"Decision support generation failed unexpectedly: {str(e)}",
+                        )
                 logger.info(f"Step timing: 4c_generate_decision_support (parallel) took {time.time() - parallel_start:.2f}s")
 
                 video_cuts_result = None

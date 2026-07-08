@@ -44,7 +44,7 @@ class OCRService:
             
             # 信頼度情報を取得
             data = pytesseract.image_to_data(image, output_type=Output.DICT, lang='eng+jpn')
-            confidences = [int(conf) for conf in data['confidence'] if int(conf) > 0]
+            confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
             
             # テキストをクリーニング
@@ -115,7 +115,7 @@ class OCRService:
                 # OCR 実行
                 text = pytesseract.image_to_string(frame_pil, lang='eng+jpn')
                 data = pytesseract.image_to_data(frame_pil, output_type=Output.DICT, lang='eng+jpn')
-                confidences = [int(conf) for conf in data['confidence'] if int(conf) > 0]
+                confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
                 avg_confidence = sum(confidences) / len(confidences) if confidences else 0
                 
                 cleaned_text = text.strip()

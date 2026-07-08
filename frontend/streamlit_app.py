@@ -551,6 +551,10 @@ DECISION_SUPPORT_ERROR_EXPLANATIONS = {
         "reason": "システム側の設定により、分析機能を一時的にご利用いただけない状態でした。",
         "action": "時間をおいて再度お試しいただき、解決しない場合は管理者にご確認ください。",
     },
+    "INSUFFICIENT_TEXT_SOURCE": {
+        "reason": "明示的なメッセージ（テロップやナレーション）がほぼ無いため、現在の5軸診断では十分な精度で評価できませんでした。",
+        "action": "テロップを追加するか、ナレーション音声を含む動画で再度お試しください。",
+    },
 }
 DECISION_SUPPORT_ERROR_EXPLANATION_DEFAULT = {
     "reason": "分析結果を生成する過程で、想定外の問題が発生しました。",
