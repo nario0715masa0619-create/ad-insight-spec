@@ -82,13 +82,51 @@
 pip install -r requirements.txt
 
 # DB テーブル初期化（SQLite または PostgreSQL）
-# SQLiteの場合: 初回起動時に自動生成されます。
-# PostgreSQLの場合: 事前にDBを作成し、AlembicやSQLスクリプトでテーブルを作成してください。
+# 新規テーブルは初回起動時（app/main.py の Base.metadata.create_all）に自動生成されます。
+# ただし create_all は「存在しないテーブルの新規作成」のみを行い、既存テーブルへの
+# カラム追加・変更は行いません。既存テーブルのスキーマ変更は Alembic で行ってください
+# （下記「1a. DBマイグレーション」参照）。
 
 # 外部依存ツールのインストール確認
 tesseract --version
 ffmpeg -version
 ```
+
+### 1a. DBマイグレーション（Alembic、2026-07-09〜）
+
+`backend/alembic/` にマイグレーション一式があります（`backend/alembic.ini` の
+`sqlalchemy.url` は意図的に空欄にしてあり、`app/db/session.py` と同じDB URLを
+`alembic/env.py` が実行時に読み込みます。実行ディレクトリによって別々のDBを見て
+しまう事故を避けるための設計です）。
+
+**このリポジトリのDBに初めてAlembicを導入する場合**（本番DBは`create_all`のみで
+作られており、Alembicのマイグレーション実行履歴を一切持っていません）:
+
+```bash
+cd backend
+# 既存テーブルを再作成せず、「baselineマイグレーションまでは適用済み」と
+# 印だけを付ける（実際のDDLは実行されない）
+alembic stamp 5ce6bc069419
+
+# 以降のマイグレーション（asset_data/evaluation_dataカラム追加など）を適用
+alembic upgrade head
+```
+
+**新規環境（まっさらなDB）の場合**は、`stamp`せずに最初から通常どおり実行します:
+```bash
+cd backend
+alembic upgrade head
+```
+
+**本番DBへの適用前には必ずバックアップを取得してください**
+（`docs/POSTGRES_MIGRATION.md`のバックアップ手順と同様）:
+```bash
+cp ad_insight.db ad_insight.db.backup.$(date +%Y%m%d_%H%M%S)
+```
+
+以降、`AdInsight`モデルのスキーマを変更する際は、モデル変更と同時に
+`alembic revision -m "..."`でマイグレーションファイルを作成し、`upgrade()`/
+`downgrade()`を記述してください（`Base.metadata.create_all`頼みの変更はしない）。
 
 ### 2. Nginx ファイルサイズ上限設定案
 アップロードされる画像や動画ファイルサイズを許容するため、Nginx側で上限を設定します。

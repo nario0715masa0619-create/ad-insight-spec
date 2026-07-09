@@ -87,6 +87,9 @@ python ../scripts/e2e_test_phase2c2.py
 ### 開発環境での注意点
 - `uvicorn --reload` を使用すると、コード変更時に自動的にサーバーが再起動します。
 - SQLite DB (`ad_insight.db`) はローカルにファイルとして生成されます。
+- 新規テーブルは起動時に自動生成されますが（`Base.metadata.create_all`）、既存
+  テーブルへのカラム追加・変更はAlembicで行います。手順は
+  `docs/DEPLOYMENT.md`の「1a. DBマイグレーション」を参照してください。
 
 ---
 
