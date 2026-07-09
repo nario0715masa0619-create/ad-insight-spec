@@ -5,6 +5,7 @@ from app.services.asset_evaluation_adapter import (
     _downcast_asset_meta,
     _downcast_input_metadata,
     _downcast_creative_core,
+    _downcast_diagnostics,
 )
 
 
@@ -249,3 +250,146 @@ class TestDowncastCreativeCore:
     def test_missing_ocr_extracted_text_defaults_to_empty_string(self):
         result = _downcast_creative_core({}, {}, None)
         assert result["ocr_extracted_text"] == ""
+
+
+class TestDowncastDiagnostics:
+    """_downcast_diagnostics 単体テスト（Phase 2 downcastバッチ3）。
+    Diagnosticsは既存型をそのまま再利用しているためvideo_cuts以外はlossless、
+    video_cuts.video_cuts[].start_seconds/end_secondsのみasset_data.asset_structure.cuts
+    からcut_idで突き合わせて補完する（オープン課題2の解決方針）。"""
+
+    def _make_diagnostics_v0(self, **overrides):
+        data = {
+            "qualitative": {
+                "creative_fatigue_risk": "low",
+                "creative_fatigue_basis": "テスト用の根拠テキストです",
+            },
+            "llm_model": "gpt-4o",
+            "llm_success": True,
+            "llm_retry_count": 0,
+            "llm_error": None,
+        }
+        data.update(overrides)
+        return data
+
+    def test_non_video_cuts_fields_pass_through_unchanged(self):
+        """qualitative/llm_model等、video_cuts以外は無変換で転記される（lossless）"""
+        diagnostics_v0 = self._make_diagnostics_v0()
+        result = _downcast_diagnostics(diagnostics_v0)
+        assert result["qualitative"] == diagnostics_v0["qualitative"]
+        assert result["llm_model"] == "gpt-4o"
+        assert result["llm_success"] is True
+
+    def test_none_video_cuts_returns_unchanged(self):
+        """video_cutsがNone（画像フォーマット等）の場合、補完対象がないためそのまま返す"""
+        diagnostics_v0 = self._make_diagnostics_v0(video_cuts=None)
+        result = _downcast_diagnostics(diagnostics_v0)
+        assert result["video_cuts"] is None
+
+    def test_empty_video_cuts_list_returns_unchanged(self):
+        diagnostics_v0 = self._make_diagnostics_v0(
+            video_cuts={
+                "schema_version": "1.0",
+                "generation_status": {"status": "not_attempted", "error_code": None},
+                "video_summary": None,
+                "video_cuts": [],
+            }
+        )
+        result = _downcast_diagnostics(diagnostics_v0)
+        assert result["video_cuts"]["video_cuts"] == []
+
+    def test_cut_id_match_fills_start_end_seconds(self):
+        diagnostics_v0 = self._make_diagnostics_v0(
+            video_cuts={
+                "schema_version": "1.0",
+                "generation_status": {"status": "success", "error_code": None},
+                "video_summary": {"total_duration_seconds": 15.9, "cut_count": 1},
+                "video_cuts": [
+                    {
+                        "cut_id": "cut_1",
+                        "start_seconds": None,
+                        "end_seconds": None,
+                        "role_tag": "hook",
+                        "summary": "画面内容の要約テキスト",
+                        "improvement_suggestion": "具体的な改善提案テキスト",
+                    }
+                ],
+            }
+        )
+        cuts_v0 = [{"cut_id": "cut_1", "start_sec": 0.0, "end_sec": 8.1}]
+        result = _downcast_diagnostics(diagnostics_v0, cuts_v0)
+        merged_cut = result["video_cuts"]["video_cuts"][0]
+        assert merged_cut["start_seconds"] == 0.0
+        assert merged_cut["end_seconds"] == 8.1
+        # 他のフィールドは無変換のまま
+        assert merged_cut["role_tag"] == "hook"
+        assert merged_cut["summary"] == "画面内容の要約テキスト"
+
+    def test_cut_id_no_match_leaves_start_end_none_fail_soft(self):
+        """cut_idがcuts_v0に見つからない場合、架空の時間範囲を捏造せずNoneのまま残す"""
+        diagnostics_v0 = self._make_diagnostics_v0(
+            video_cuts={
+                "schema_version": "1.0",
+                "generation_status": {"status": "success", "error_code": None},
+                "video_summary": {"total_duration_seconds": 8.1, "cut_count": 1},
+                "video_cuts": [
+                    {
+                        "cut_id": "cut_unknown",
+                        "start_seconds": None,
+                        "end_seconds": None,
+                        "role_tag": "hook",
+                        "summary": "画面内容の要約テキスト",
+                        "improvement_suggestion": "具体的な改善提案テキスト",
+                    }
+                ],
+            }
+        )
+        cuts_v0 = [{"cut_id": "cut_1", "start_sec": 0.0, "end_sec": 8.1}]
+        result = _downcast_diagnostics(diagnostics_v0, cuts_v0)
+        merged_cut = result["video_cuts"]["video_cuts"][0]
+        assert merged_cut["start_seconds"] is None
+        assert merged_cut["end_seconds"] is None
+
+    def test_missing_cuts_v0_argument_defaults_to_no_match(self):
+        diagnostics_v0 = self._make_diagnostics_v0(
+            video_cuts={
+                "schema_version": "1.0",
+                "generation_status": {"status": "success", "error_code": None},
+                "video_summary": {"total_duration_seconds": 8.1, "cut_count": 1},
+                "video_cuts": [
+                    {
+                        "cut_id": "cut_1",
+                        "start_seconds": None,
+                        "end_seconds": None,
+                        "role_tag": "hook",
+                        "summary": "画面内容の要約テキスト",
+                        "improvement_suggestion": "具体的な改善提案テキスト",
+                    }
+                ],
+            }
+        )
+        result = _downcast_diagnostics(diagnostics_v0)
+        assert result["video_cuts"]["video_cuts"][0]["start_seconds"] is None
+
+    def test_does_not_mutate_input_dicts(self):
+        """入力のdiagnostics_v0/cuts_v0は変更されない（新しいdictを構築して返す）"""
+        original_cut = {
+            "cut_id": "cut_1",
+            "start_seconds": None,
+            "end_seconds": None,
+            "role_tag": "hook",
+            "summary": "画面内容の要約テキスト",
+            "improvement_suggestion": "具体的な改善提案テキスト",
+        }
+        diagnostics_v0 = self._make_diagnostics_v0(
+            video_cuts={
+                "schema_version": "1.0",
+                "generation_status": {"status": "success", "error_code": None},
+                "video_summary": {"total_duration_seconds": 8.1, "cut_count": 1},
+                "video_cuts": [original_cut],
+            }
+        )
+        cuts_v0 = [{"cut_id": "cut_1", "start_sec": 0.0, "end_sec": 8.1}]
+        _downcast_diagnostics(diagnostics_v0, cuts_v0)
+        assert original_cut["start_seconds"] is None
+        assert original_cut["end_seconds"] is None
