@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean, UniqueConstraint, Index
 from sqlalchemy.sql import func
 from datetime import datetime
+from typing import Optional
 from app.db.base import Base
 
 
@@ -36,7 +37,16 @@ class AdInsight(Base):
     
     # JSON 正本データ（ad_insight_spec v0.2 全体）
     spec_data: dict = Column(JSON, nullable=False)
-    
+
+    # ===== asset/evaluation split 用（Phase 1、2026-07-09〜） =====
+    # 将来的な観測事実(asset_data)/評価・解釈(evaluation_data)分割の受け皿。
+    # 現時点ではどちらも常に NULL（dual-writeはまだ実装していない、Phase 3で着手）。
+    # 読み出し側は backend/app/services/asset_evaluation_adapter.py::resolve_spec_data
+    # を経由するため、両方NULLの間は spec_data のみのレコードとして無変換で扱われる。
+    # 詳細: docs/plans/asset_evaluation_split_phase2_tasks.md
+    asset_data: Optional[dict] = Column(JSON, nullable=True)
+    evaluation_data: Optional[dict] = Column(JSON, nullable=True)
+
     # ユニーク制約: (asset_id, version) の組み合わせで一意
     __table_args__ = (
         UniqueConstraint('asset_id', 'version', name='uq_asset_id_version'),

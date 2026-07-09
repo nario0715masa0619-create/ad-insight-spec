@@ -82,13 +82,101 @@
 pip install -r requirements.txt
 
 # DB テーブル初期化（SQLite または PostgreSQL）
-# SQLiteの場合: 初回起動時に自動生成されます。
-# PostgreSQLの場合: 事前にDBを作成し、AlembicやSQLスクリプトでテーブルを作成してください。
+# 新規テーブルは初回起動時（app/main.py の Base.metadata.create_all）に自動生成されます。
+# ただし create_all は「存在しないテーブルの新規作成」のみを行い、既存テーブルへの
+# カラム追加・変更は行いません。既存テーブルのスキーマ変更は Alembic で行ってください
+# （下記「1a. DBマイグレーション」参照）。
 
 # 外部依存ツールのインストール確認
 tesseract --version
 ffmpeg -version
 ```
+
+### 1a. DBマイグレーション（Alembic、2026-07-09〜）
+
+`backend/alembic/` にマイグレーション一式があります（`backend/alembic.ini` の
+`sqlalchemy.url` は意図的に空欄にしてあり、`app/db/session.py` と同じDB URLを
+`alembic/env.py` が実行時に読み込みます。実行ディレクトリによって別々のDBを見て
+しまう事故を避けるための設計です）。
+
+#### 実施順序（重要）: マイグレーションを先に、コードデプロイは後
+
+**マイグレーション適用（DBにカラムを追加する）は、必ず新コード（`AdInsight`モデルに
+`asset_data`/`evaluation_data`を追加したコード、およびそれを参照する`specs.py`）を
+デプロイする前に完了させてください。逆順で行うと本番が壊れます。**
+
+理由（ローカルで実際に再現・確認済み）: 新コードの`AdInsight`モデルは
+`asset_data`/`evaluation_data`カラムの存在を前提にSELECT文を組み立てる。マイグレーション
+未適用のDB（＝現在の本番）に対して新コードを先に動かすと、`GET /specs`系エンドポイントを
+含む`AdInsight`に触れる全クエリが
+`sqlite3.OperationalError: no such column: ad_insights.asset_data`
+で即座に失敗する（新カラムを実際に使う機能ではなく、ORMのSELECT文生成の時点で落ちるため、
+一部だけ動くという状態にはならず、デプロイ直後から全面的に障害になる）。
+
+正しい順序:
+1. 本番DBのバックアップを取得する（下記コマンド）
+2. 本番DBに対してマイグレーションを適用する（`alembic stamp` → `alembic upgrade head`）
+3. マイグレーション適用後のDBに対して、新コード（Phase 1実装）をデプロイする
+4. `/health`・`GET /api/v1/specs`等で疎通確認する
+
+#### 1. バックアップ取得（マイグレーション適用前に必須）
+（`docs/POSTGRES_MIGRATION.md`のバックアップ手順と同様）:
+```bash
+cp ad_insight.db ad_insight.db.backup.$(date +%Y%m%d_%H%M%S)
+```
+
+#### 2. マイグレーション適用
+
+**このリポジトリのDBに初めてAlembicを導入する場合**（本番DBは`create_all`のみで
+作られており、Alembicのマイグレーション実行履歴を一切持っていません）:
+
+```bash
+cd backend
+# 既存テーブルを再作成せず、「baselineマイグレーションまでは適用済み」と
+# 印だけを付ける（実際のDDLは実行されない）
+alembic stamp 5ce6bc069419
+
+# 以降のマイグレーション（asset_data/evaluation_dataカラム追加など）を適用
+alembic upgrade head
+```
+
+**新規環境（まっさらなDB）の場合**は、`stamp`せずに最初から通常どおり実行します:
+```bash
+cd backend
+alembic upgrade head
+```
+
+適用後、必ず`PRAGMA table_info(ad_insights)`（またはこれに相当する確認）で
+`asset_data`/`evaluation_data`カラムが追加されていることを確認してから次に進んでください。
+
+#### 3. ロールバック方針
+
+`alembic downgrade 5ce6bc069419`で`asset_data`/`evaluation_data`カラムを削除できる
+（ローカルで動作確認済み: SQLite 3.35+のネイティブ`DROP COLUMN`を使うため、
+batch modeなしでそのまま動く）。
+
+**ただし、ロールバックが無条件に安全なのは、この2カラムに実際のデータが入っていない
+間だけ**（dual-write未実装の現時点〜Phase 3着手前）。Phase 3でdual-writeが始まり、
+`asset_data`/`evaluation_data`に実データが入るようになった後にダウングレードすると、
+そのデータは`DROP COLUMN`で失われる。Phase 3着手後にロールバックが必要になった場合は、
+先に該当データをバックアップ・退避してから`alembic downgrade`を実行すること。
+
+コード側（`AdInsight`モデル・`specs.py`の配線）を先に戻すか、DBのダウングレードを
+先に行うかは、上記「実施順序」と対称に考える: **コードを戻す→その後にDBを戻す**
+（新カラムを参照するコードが本番に残っている間にカラムを消すと、上記と同じ
+`OperationalError`が発生するため）。
+
+#### マイグレーションファイルの不変性（append-only）
+
+`backend/alembic/versions/`配下の既存マイグレーションファイル
+（`5ce6bc069419_baseline_existing_ad_insights_schema.py`、
+`a1f7ccac7a04_add_asset_data_and_evaluation_data_.py`）は、
+一度マージされた後は内容を書き換えないこと。今後`AdInsight`のスキーマを変更する際は、
+モデル変更と同時に`alembic revision -m "..."`で**新しいファイル**を作成し、
+`upgrade()`/`downgrade()`を記述する（`Base.metadata.create_all`頼みの変更はしない）。
+既存マイグレーションを書き換えると、環境ごとに異なる`alembic_version`との整合性が
+取れなくなり、「そのファイルを見たことがある環境」と「見ていない環境」でスキーマが
+食い違う原因になる。
 
 ### 2. Nginx ファイルサイズ上限設定案
 アップロードされる画像や動画ファイルサイズを許容するため、Nginx側で上限を設定します。

@@ -13,6 +13,7 @@ from app.repositories import AdInsightRepository
 from app.models import AdInsight
 from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
+from app.services.asset_evaluation_adapter import resolve_spec_data
 
 from app.utils.error_handler import create_error_response, ErrorResponse
 from app.utils.logging import request_id_var, trace_id_var, get_logger
@@ -325,9 +326,16 @@ async def list_specs(
 
         # UI 側が一覧カードの版・分析日時をそのまま使えるよう、
         # 各 item に version / created_at を追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
+        # resolve_spec_data: asset_data/evaluation_dataは現状常にNULLのため、実質的には
+        # rec.spec_data をそのまま返す（無変換）。将来dual-writeが始まった際の読み出し
+        # 抽象化のための配線（docs/plans/asset_evaluation_split_phase2_tasks.md参照）。
         return {
             "items": [
-                {**rec.spec_data, "version": rec.version, "created_at": rec.created_at.isoformat()}
+                {
+                    **resolve_spec_data(rec.spec_data, rec.asset_data, rec.evaluation_data),
+                    "version": rec.version,
+                    "created_at": rec.created_at.isoformat(),
+                }
                 for rec in records
             ],
             "total": total_count,
@@ -386,13 +394,17 @@ async def get_spec(
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
 
-        result = {**record.spec_data, "version": record.version, "created_at": record.created_at.isoformat()}
+        # resolve_spec_data: asset_data/evaluation_dataは現状常にNULLのため、実質的には
+        # record.spec_data をそのまま返す（無変換）。将来dual-writeが始まった際の読み出し
+        # 抽象化のための配線（docs/plans/asset_evaluation_split_phase2_tasks.md参照）。
+        resolved_spec_data = resolve_spec_data(record.spec_data, record.asset_data, record.evaluation_data)
+        result = {**resolved_spec_data, "version": record.version, "created_at": record.created_at.isoformat()}
 
         # 前回バージョンとの decision_support 差分（新形式同士の場合のみ、fail-soft）。
         # record.spec_data はSQLAlchemyが追跡するライブオブジェクトなので、ネストした
         # diagnostics dict を直接 mutate せず、コピーしてから追加する。
         previous_record = repo.get_previous_version(asset_id, record.version)
-        diagnostics = record.spec_data.get("diagnostics", {}) or {}
+        diagnostics = resolved_spec_data.get("diagnostics", {}) or {}
         decision_support_diff = _build_decision_support_diff(diagnostics.get("decision_support"), previous_record)
         if decision_support_diff:
             result["diagnostics"] = {**diagnostics, "decision_support_diff": decision_support_diff}

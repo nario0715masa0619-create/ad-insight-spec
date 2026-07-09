@@ -34,6 +34,17 @@ def test_create_auto_increment_version(db_session):
     record2 = repo.create(asset_id=asset_id, format="image_static", spec_data=spec_data)
     assert record2.version == 2
 
+def test_create_leaves_asset_evaluation_data_columns_null(db_session):
+    """
+    Phase 1で追加したasset_data/evaluation_dataカラムは、dual-writeが未実装の
+    現時点では常にNULLのままであること（create()のシグネチャ・挙動は無変更）。
+    """
+    repo = AdInsightRepository(db_session)
+    record = repo.create(asset_id="asset_unknown_phase1_cols", format="image_static", spec_data={"key": "value"})
+    assert record.asset_data is None
+    assert record.evaluation_data is None
+
+
 def test_create_auto_increment_version_with_deleted(db_session):
     repo = AdInsightRepository(db_session)
     asset_id = "asset_unknown_a1b2c3d4"
