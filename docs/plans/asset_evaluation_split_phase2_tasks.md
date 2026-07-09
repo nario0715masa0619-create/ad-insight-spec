@@ -3,6 +3,7 @@
 **対象フェーズ**: Phase 2（read adapter設計のみ、dual-write実装は含まない）
 **前提**: Phase 1（`AdInsight.asset_data`/`evaluation_data`カラム追加、`AssetJsonV0`/`EvaluationJsonV0`スキーマ定義）は Antigravity 側のローカルブランチ（`feature/asset-evaluation-split-phase1`、未push）で実装中。本ドキュメントはそのレビュー内容を踏まえて作成。
 **ステータス**: 🔵 Planning
+**⚠️ Implementation pending / No production impact**: 本ドキュメントは設計・レビューの記録であり、コード実装は一切含まない。本番のコード・DB・APIレスポンス形状には何の影響も与えていない（`resolve_spec_data`等は未実装、Phase 1側のPydanticスキーマ・Alembic migrationも本番へは未適用）。実装が始まった時点で本ファイルのステータスを更新すること。
 
 ---
 
