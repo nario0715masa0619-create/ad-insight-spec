@@ -6,6 +6,10 @@ from app.services.asset_evaluation_adapter import (
     _downcast_input_metadata,
     _downcast_creative_core,
     _downcast_diagnostics,
+    _downcast_performance,
+    _downcast_landing_page,
+    _downcast_views,
+    _downcast_metadata,
 )
 
 
@@ -393,3 +397,101 @@ class TestDowncastDiagnostics:
         _downcast_diagnostics(diagnostics_v0, cuts_v0)
         assert original_cut["start_seconds"] is None
         assert original_cut["end_seconds"] is None
+
+
+class TestDowncastPerformance:
+    """_downcast_performance 単体テスト（Phase 2 downcastバッチ4）。
+    Performance型はEvaluationJsonV0でそのまま再利用されているため恒等写像。"""
+
+    def test_identity_passthrough(self):
+        performance_v0 = {"impressions": 10000, "clicks": 500, "ctr": 0.05}
+        assert _downcast_performance(performance_v0) == performance_v0
+
+    def test_none_stays_none(self):
+        assert _downcast_performance(None) is None
+
+
+class TestDowncastLandingPage:
+    """_downcast_landing_page 単体テスト（Phase 2 downcastバッチ4）。
+    LandingPage型はEvaluationJsonV0.landing_page_analysisでそのまま再利用されているため恒等写像。"""
+
+    def test_identity_passthrough(self):
+        landing_page_v0 = {"url": "https://example.com/lp", "fv_copy": "テストコピー"}
+        assert _downcast_landing_page(landing_page_v0) == landing_page_v0
+
+    def test_none_stays_none(self):
+        assert _downcast_landing_page(None) is None
+
+
+class TestDowncastViews:
+    """_downcast_views 単体テスト（Phase 2 downcastバッチ4）。
+    converter_service.py::_populate_viewsの現行固定値出力と完全に一致することを検証する
+    （実データを一切必要としない）。"""
+
+    def test_matches_current_legacy_hardcoded_output(self):
+        """converter_service.py::_populate_viewsが返す現行の固定値と1バイトも違わないこと"""
+        result = _downcast_views()
+        assert result == {
+            "dashboard_summary": {
+                "status_label": "Good",
+                "key_metric_highlight": "Analysis complete",
+                "status_color": "#FFAA00",
+            },
+            "performance_ranking": "Average",
+            "trend_indicator": None,
+            "creative_fatigue_visual": "● Low",
+            "lp_match_visual": "✓ Aligned",
+            "recommended_actions_display": [],
+        }
+
+    def test_takes_no_arguments(self):
+        """viewsはasset_data/evaluation_dataの実データを一切必要としないため、
+        引数なしで呼び出せることを確認する"""
+        import inspect
+        sig = inspect.signature(_downcast_views)
+        assert len(sig.parameters) == 0
+
+
+class TestDowncastMetadata:
+    """_downcast_metadata 単体テスト（Phase 2 downcastバッチ4、オープン課題3の続き）"""
+
+    def test_full_roundtrip_from_asset_and_evaluation_meta(self):
+        asset_meta_v0 = {
+            "asset_id": "asset_meta_test_0001",
+            "created_at": "2026-07-09T12:00:00",
+            "source_type": "local_file",
+            "mode": "file_plus_lp_plus_manual_kpi",
+        }
+        evaluation_meta_v0 = {
+            "evaluated_at": "2026-07-09T12:30:00",
+            "evaluator_model": "gpt-4o",
+            "processing_time_ms": 4200,
+            "validation_status": "passed",
+            "validation_notes": ["LLM analysis: gpt-4o (success)"],
+            "analysis_tools_used": {"ocr_engine": "tesseract"},
+        }
+        result = _downcast_metadata(asset_meta_v0, evaluation_meta_v0)
+        assert result == {
+            "generated_at": "2026-07-09T12:00:00",
+            "data_source": "local_file",
+            "ai_model_version": "gpt-4o",
+            "json_schema_version": "v0.2",
+            "input_mode": "file_plus_lp_plus_manual_kpi",
+            "analysis_tools_used": {"ocr_engine": "tesseract"},
+            "processing_time_ms": 4200,
+            "validation_status": "passed",
+            "validation_notes": ["LLM analysis: gpt-4o (success)"],
+        }
+
+    def test_json_schema_version_matches_current_legacy_fixed_value(self):
+        """json_schema_versionは未決だが、現時点ではlegacy側の固定値"v0.2"
+        （converter_service.py::_populate_metadata）と一致させている"""
+        result = _downcast_metadata({}, {})
+        assert result["json_schema_version"] == "v0.2"
+
+    def test_missing_fields_become_none(self):
+        result = _downcast_metadata({}, {})
+        assert result["generated_at"] is None
+        assert result["data_source"] is None
+        assert result["input_mode"] is None
+        assert result["ai_model_version"] is None
