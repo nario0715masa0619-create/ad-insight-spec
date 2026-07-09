@@ -28,6 +28,24 @@ feature/asset-evaluation-split-phase1、未push・非公式）のレビューを
   これにより「video→video_static のマッピングを別途定義する」という
   Phase 2設計docの未決事項が不要になる。
 
+Phase 2 downcastバッチ2（2026-07-09、docs/plans/asset_evaluation_split_phase2_tasks.md
+「🗂 6項目の保存方針比較」で確定した推奨案の実装）で追加したフィールド:
+- `AssetMetaV0.mode`/`AssetMetaV0.file_paths`: legacy `spec_data.input_metadata`の
+  `mode`/`file_paths`に対応する変換元。`asset_meta`（v0）に置く理由は、どちらも
+  「取り込み時点で確定する情報」であり、既存の`source_type`/`created_at`と同じ
+  性質を持つため（`input_metadata`をまるごと別ブロックとして追加する案は、
+  `source_type`/`input_timestamp`/`api_source`の重複・形状不一致を招くため不採用）。
+  `file_paths`と既存の`source_ref`（単一文字列）は役割が重複しうるが、
+  意図的に両方残す: `source_ref`は`source_type=api/hybrid`時の汎用的な単一参照
+  （外部APIレスポンスID等）、`file_paths`は`source_type=local_file`時の
+  legacy `FilePaths`互換の構造化パスという、住み分けができる想定のため。
+- `AssetStructureV0.ocr_extracted_text`: legacy `spec_data.creative_core.ocr_extracted_text`
+  に対応する変換元。**`ocr_segments`とは別のOCR実行結果**である点に注意
+  （`ocr_segments`はカット単位の代表フレームOCR、`ocr_extracted_text`は
+  動画/画像全体に対する単一OCRパス。`backend/app/services/analysis_orchestrator.py`で
+  実際に別々の呼び出しになっていることを確認済み。一方から他方を機械的に
+  再構成することはできない）。
+
 既知の落とし穴（本セッション中に実際に2回踏んだ既知バグ）:
 `AssetMetaV0.created_at` は `datetime` 型のため、Pydantic v1で `.dict()` を
 直接使うと `TypeError: Object of type datetime is not JSON serializable` で
@@ -40,7 +58,14 @@ from enum import Enum
 
 from pydantic.v1 import BaseModel, Field
 
-from app.schemas.ad_insight import AnalysisPeriod, ExternalIds, SourceTypeEnum, FormatEnum
+from app.schemas.ad_insight import (
+    AnalysisPeriod,
+    ExternalIds,
+    SourceTypeEnum,
+    FormatEnum,
+    InputModeEnum,
+    FilePaths,
+)
 
 
 # ===== v0 asset_meta（"legacy asset_meta" のスーパーセット） =====
@@ -74,6 +99,14 @@ class AssetMetaV0(BaseModel):
     )
     created_at: datetime = Field(..., description="asset_data生成時刻（ISO 8601）")
     analysis_version: str = Field(default="v0", description="asset_data生成ロジックのバージョン")
+
+    # ----- Phase 2 downcastバッチ2で追加（legacy input_metadataへの変換元） -----
+    # mode は legacy input_metadata.mode 同様に必須（source_type/created_atと同じ
+    # 「取り込み時点で常に確定する情報」のカテゴリのため、Optionalにしない）
+    mode: InputModeEnum = Field(..., description="legacy spec_data.input_metadata.modeへの変換元")
+    file_paths: Optional[FilePaths] = Field(
+        None, description="legacy spec_data.input_metadata.file_pathsへの変換元（source_type=local_file時）"
+    )
 
 
 # ===== media_info =====
@@ -117,6 +150,13 @@ class AssetStructureV0(BaseModel):
     cuts: List[CutSpan] = Field(default_factory=list)
     transcript_segments: List[TranscriptSegment] = Field(default_factory=list)
     ocr_segments: List[OcrSegment] = Field(default_factory=list)
+    # Phase 2 downcastバッチ2で追加。legacy spec_data.creative_core.ocr_extracted_text
+    # への変換元。ocr_segments（カット単位の代表フレームOCR）とは別の、動画/画像
+    # 全体に対する単一OCRパスの結果であり、ocr_segmentsから再構成することはできない
+    # （モジュールdocstring参照）。
+    ocr_extracted_text: str = Field(
+        default="", description="動画/画像全体に対する単一OCRパスの結果（ocr_segmentsとは別データ）"
+    )
 
 
 # ===== asset_annotations =====
