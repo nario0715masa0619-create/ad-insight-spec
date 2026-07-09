@@ -1,5 +1,13 @@
 # Phase 2a バックログ - Persistence & API Foundation
 
+> ⚠️ **Historical planning doc（2026-06-23時点の記録）**
+> この文書は Phase 2a 着手前の設計論点整理・タスク分解メモであり、その後の実装状況を反映していません。
+> **現在の実装状況は [README.md](../../README.md) と現行コードを参照してください。**
+> README.md記載のとおり、Phase 2a は既に完了済みです。特に本文書内で「オプションB（正規化テーブル群）」
+> として検討された `asset_metadata`/`performance_kpi` 等の設計は**採用されておらず**、実際には
+> `docs/plans/phase2a_design_decisions.md` が決定した「JSON正本主義」（単一テーブル + `spec_data` JSON）
+> が採用・実装されています。
+
 **対象フェーズ**: Phase 2a (DB・API基盤)  
 **期間**: 2026-06-24 ～ (予定)  
 **ステータス**: 🔵 Planning  

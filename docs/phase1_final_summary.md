@@ -1,5 +1,10 @@
 # 🎉 Phase 1 最終完成報告書
 
+> ⚠️ **Historical planning doc（2026-06-23時点の記録）**
+> この文書は Phase 1 完了時点の初期計画メモ・完成報告であり、その後の実装状況を反映していません。
+> **現在の実装状況は [README.md](../README.md) と現行コードを参照してください。**
+> README.md記載のとおり、Phase 2a〜Phase 2c-3 は本文書作成後にすべて完了済みです。
+
 **プロジェクト**: Ad-Insight-Spec v0.2  
 **フェーズ**: Phase 1 (File-First Strategy)  
 **完成日**: 2026-06-23  
