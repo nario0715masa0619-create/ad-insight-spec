@@ -2,7 +2,7 @@
 
 **対象フェーズ**: Phase 2（read adapter設計・実装）＋ Phase 1（DBカラム追加・v0スキーマ導入、2026-07-09に公式化）
 **前提（2026-07-09 更新）**: Antigravity側のローカルPoC（`feature/asset-evaluation-split-phase1`、未push）はレビュー参考のみに使い、リポジトリには一切輸入しなかった。代わりに、本ドキュメントで洗い出したPoCの既知問題（`alembic.ini`の相対パス問題・`asset_meta`名称衝突・datetime JSON化の落とし穴）を踏まえて**このリポジトリ上でPhase 1を独自に設計・実装**した。現行 main の `AdInsight` モデルには `asset_data`/`evaluation_data` カラムが実在する（ブランチ`feature/asset-evaluation-phase1-columns-schemas`、下記参照）。
-**ステータス**: 🟢 Phase 1（カラム＋v0スキーマ）実装済み・ローカル検証済み ／ Phase 2第一段階（adapter scaffold）実装済み（PR #61）／ downcastバッチ1〜4で`spec_data`の**8ブロック全て**のdowncast部品が実装済み（PR #65〜#70、`_metadata.json_schema_version`のみ未決） ／ `resolve_spec_data`への配線・統合関数の実装はまだ着手していない（次バッチ）
+**ステータス**: 🟢🟢 **Phase 2 完了**（2026-07-09、PR #71）。Phase 1（カラム＋v0スキーマ）実装済み・ローカル検証済み。Phase 2 adapter scaffold（PR #61）〜downcastバッチ1〜4（PR #65〜#70）で揃った8ブロック分のdowncast部品を、統合関数`_downcast_to_spec_data()`で組み立て、`resolve_spec_data()`へ実配線した（PR #71）。**現行の全既存レコード（asset_data/evaluation_data常にNULL）への挙動影響はゼロ**（従来どおりspec_dataパススルー）。`_metadata.json_schema_version`は暫定固定値`"v0.2"`のまま配線（詳細は下記「json_schema_versionの配線方針」）。残るのは本番DBマイグレーション適用（別タスク・別途明示指示待ち）とPhase 3（dual-write）。
 **実装状況**:
 - Phase 1: `backend/alembic/`（baseline + カラム追加の2マイグレーション）、`AdInsight.asset_data`/`evaluation_data`カラム、`backend/app/schemas/asset_v0.py`・`evaluation_v0.py`を実装済み。**本番DBへのマイグレーション適用はまだ実施していない**（別途確認のうえ実施）。
 - Phase 2 adapter scaffold: `backend/app/services/asset_evaluation_adapter.py::resolve_spec_data`実装済み（PR #61）。`specs.py::get_spec`/`list_specs`への配線も実施済み（本ドキュメントの「specs.py 配線方針」で決めたとおり、カラム追加と同じPRで実施）。ただし`asset_data`/`evaluation_data`は常にNULL（dual-write未実装のため）で、`resolve_spec_data`の公開挙動は無変換パススルーのまま。
@@ -26,7 +26,13 @@
   - `_downcast_metadata(asset_meta_v0, evaluation_meta_v0)`: `generated_at`/`data_source`/`input_mode`/`ai_model_version`/`processing_time_ms`/`validation_status`/`validation_notes`/`analysis_tools_used`はlosslessに転記。**`json_schema_version`のみ、legacy側の現行固定値`"v0.2"`を暫定的に踏襲するに留め、正式な復元方法は未決定のまま明示**（`AssetMetaV0.analysis_version`から導出する案などが将来の検討候補）
   - これで8ブロック全てのdowncast部品が揃ったが、**それらを1つの`spec_data`互換dictへ組み立てる統合関数はまだ実装していない**。統合関数の実装と`resolve_spec_data`への実配線は、ユーザーの明示指示により次の「配線バッチ」に分離する
   - 既存API・CLI・本番DBには一切影響なし（コード変更は未配線のdowncast部品追加のみ）
-  - 既存API・CLI・本番DBには一切影響なし
+- **Phase 2 downcastバッチ5・配線バッチ（2026-07-09、PR #71）**: Phase 2の最終バッチ。
+  - `_downcast_to_spec_data(asset_data, evaluation_data)`を実装（`asset_evaluation_adapter.py`）。8つの個別downcast関数を呼び出し、`spec_data`と同じ8トップレベルキーを持つdictを組み立てるだけの薄い統合関数（独自の変換ロジックは書いていない）
+  - `resolve_spec_data()`を、Phase 2設計doc本来の3分岐（両方None→無変換／両方非None→downcast／片方のみ非None→fail-soft）どおりに書き換えた。**「両方None」の分岐は無変更のため、現行の全既存レコードへの挙動影響はゼロ**（dual-write未実装のため、asset_data/evaluation_dataが実運用で非Noneになる経路がまだ無い）
+  - `_downcast_to_spec_data`内で想定外の例外が発生した場合も、`resolve_spec_data`側の`try/except`でspec_dataへfail-softにフォールバックする（警告ログ付き）。各ブロック内の欠損（例: `asset_data.asset_meta`が丸ごと欠けている）は`.get(key) or {}`で空dict扱いにし、その下位フィールドは各downcast関数の`.get()`によりNoneになる（捏造しない）
+  - integration testを追加（実際のPydantic v0モデルから構築したasset_data/evaluation_dataを渡し、resolve_spec_data出力が**legacy `AdInsightSpec`のPydanticバリデーションを実際に通る**ことまで確認）
+  - `docs/plans/asset_evaluation_split_phase2_tasks.md`を更新（本セクション）
+  - 既存API・CLI・本番DBには一切影響なし（本番の全既存レコードは「両方None」パスのみを通り続ける）
 
 ---
 
@@ -428,18 +434,77 @@ Phase 2バッチ2で`AssetMetaV0.mode`が追加されたことで、当初「未
 
 ---
 
+## 🔐 resolve_spec_dataへの配線（2026-07-09: 実装完了、PR #71）
+
+### 統合関数
+
+`_downcast_to_spec_data(asset_data, evaluation_data)`（`asset_evaluation_adapter.py`）が、
+8つの個別downcast関数を呼び出して`spec_data`と同じ8トップレベルキーを持つdictを組み立てる。
+独自の変換ロジックはここには書かず、各ブロックの関数への振り分けと、各関数が要求する
+サブブロック（`asset_meta`/`media_info`/`asset_structure`/`evaluation_meta`/`diagnostics`/
+`creative_core`/`performance`/`landing_page_analysis`）の取り出しのみを行う。
+
+### resolve_spec_dataの最終的な3分岐
+
+Phase 2設計doc冒頭（本ドキュメントの「1つの入口関数として設計する」節）で当初から定義していた
+3分岐を、そのとおりに実装した:
+
+| `asset_data` | `evaluation_data` | 挙動 |
+|---|---|---|
+| None | None | `spec_data`をそのまま返す（無変換）。**現行の全レコードがこれに該当し、挙動は変わらない** |
+| 値あり | 値あり | `_downcast_to_spec_data()`でlegacy互換dictを再構築して返す（**新規有効化**） |
+| 値あり | None（またはその逆） | `spec_data`へfail-soft（警告ログ付き、挙動は変更なし） |
+
+`_downcast_to_spec_data`内で想定外の例外（例: dictでない値が渡された等）が発生した場合も、
+`resolve_spec_data`側の`try/except`で受け止め、`spec_data`へfail-softにフォールバックする
+（警告ログ付き、例外を外へ送出しない）。
+
+### 欠損値の扱い（捏造しない方針の維持）
+
+`asset_data`/`evaluation_data`内の各サブブロックが丸ごと欠けている場合でも、
+`_downcast_to_spec_data`は`.get(key) or {}`で空dict扱いにするため例外にはならない。
+結果として、その下位フィールドは各downcast関数の既存の`.get()`ロジックによりNoneになる
+（架空の値を補わない、これまでのバッチ1〜4の各関数の方針をそのまま踏襲）。
+
+### json_schema_versionの配線方針（確認したかった論点への回答）
+
+**最小リスク案として、当面はlegacy互換の固定値`"v0.2"`のまま配線した**（TODOコメント付き）。
+理由:
+
+1. **現状、この分岐は実運用で一度も実行されない**: dual-write未実装のため、
+   `asset_data`/`evaluation_data`が実際に非Noneになる呼び出し元が存在しない。
+   `json_schema_version`の値がどうであれ、本番の挙動には一切影響しない。
+2. **legacy側の現行実装と完全に一致する**: `converter_service.py::_populate_metadata`も
+   常に固定値`"v0.2"`を書き込んでいる（動的ロジックは無い）。「暫定固定値」は
+   「今のlegacy出力と1バイトも違わない」ことを意味し、新たな不整合を生まない。
+   将来の正式なバージョニング戦略確定を配線のブロッカーにする方が、
+   価値の低い先送りコストを生む。
+3. **TODOとして明示**: `_downcast_metadata()`のdocstringとコード内コメント
+   （`"json_schema_version": "v0.2",  # 未決、上記docstring参照`）に、これが暫定対応であり
+   将来Phase 3で見直す必要があることを明記済み。配線後もこの情報は失われない。
+
+「配線せずTODOとして止める」案（＝配線バッチをさらに先送りする）は採用しなかった。
+理由: 8ブロック中7ブロックが完全に確定しており、`json_schema_version`1フィールドの
+バージョニング戦略未確定を理由に配線バッチ全体を止める効果は薄く（上記1のとおり
+本番挙動に影響しないため）、Phase 3（dual-write）着手のタイミングを不必要に遅らせるだけ
+になると判断した。
+
+---
+
 ## ✅ 実装タスク（issue粒度）
 
 1. **[設計]** 上記オープン課題1〜3を解決し、`spec_data`⇄(`asset_data`, `evaluation_data`)の完全なフィールド対応表を確定する — ✅ 完了（2026-07-09、`asset_v0.py`/`evaluation_v0.py`実装と同時）
-2. **[実装]** `resolve_spec_data(spec_data, asset_data=None, evaluation_data=None) -> dict`を実装 — ✅ 完了（PR #61）。旧データ（spec_dataのみ）の無変換パスのみ実装。**新データ変換パス（downcast本体）への配線は未実装**（下記タスク9参照）
-   - 2026-07-09追記: downcastバッチ1（PR #65）で`_downcast_asset_meta()`、バッチ2（PR #68）で`_downcast_input_metadata()`・`_downcast_creative_core()`を実装（いずれも`resolve_spec_data`へは未配線）
-3. **[テスト]** `resolve_spec_data`の単体テスト — 🟡 一部完了。「両方None→無変換」「片方/両方非None→fail-softフォールバック＋警告ログ」（PR #61）、`_downcast_asset_meta()`/`_downcast_input_metadata()`/`_downcast_creative_core()`個別の単体テスト（PR #65, #68）は完了。`resolve_spec_data`全体を通した統合downcastテストは、残り5ブロックのdowncastが揃い配線されてから
-4. **[テスト]** `streamlit_app.py`のレンダリング関数が`resolve_spec_data`の新データ変換パス出力に対しても壊れずに表示できることの確認 — ⏳ 未着手（`resolve_spec_data`への配線自体が未実施のため対象がない）
+2. **[実装]** `resolve_spec_data(spec_data, asset_data=None, evaluation_data=None) -> dict`を実装 — ✅ **完全完了**（PR #61で骨格、PR #71で新データ変換パスを実配線）。3分岐（両方None/両方非None/片方のみ非None）全て実装済み
+   - 2026-07-09追記: downcastバッチ1〜4（PR #65, #68, #69, #70）で8ブロック分の個別downcast関数を実装し、バッチ5（PR #71）で統合関数`_downcast_to_spec_data()`を実装して`resolve_spec_data`へ配線した
+3. **[テスト]** `resolve_spec_data`の単体テスト — ✅ **完了**。「両方None→無変換」「片方のみ非None→fail-softフォールバック＋警告ログ」（PR #61, #71で文言更新）、8個別downcast関数の単体テスト（PR #65, #68, #69, #70）、**`resolve_spec_data`全体を通した統合downcastテスト**（実際のPydantic v0モデルから構築したデータで、legacy `AdInsightSpec`のバリデーションまで通ることを確認、PR #71）
+4. **[テスト]** `streamlit_app.py`のレンダリング関数が`resolve_spec_data`の新データ変換パス出力に対しても壊れずに表示できることの確認 — ⏳ 未着手。dual-write未実装のため新データ変換パスは実運用でまだ一度も踏まれない。dual-write実装（Phase 3）着手時に着手する
 5. **[組み込み判断]** `specs.py::get_spec`/`list_specs`への`resolve_spec_data`組み込み — ✅ 完了（2026-07-09、カラム追加と同じPRで実施）
 6. **[ドキュメント]** 本ファイルの対応表を確定版として更新し、`docs/specs/`配下に正式スキーマドキュメントを作成 — ✅ 完了（2026-07-09、PR #68）。`docs/specs/asset_evaluation_v0_schema.md`を新規作成
 7. **[Phase 1: カラム追加]** `AdInsight.asset_data`/`evaluation_data`カラム追加、Alembic導入 — ✅ 完了（2026-07-09）。`backend/alembic/`にbaseline+カラム追加の2マイグレーション、`backend/app/models/ad_insight.py`にカラム追加。**本番DBへの適用は未実施**（別途確認のうえ実施）
 8. **[Phase 1: v0スキーマ]** `AssetJsonV0`/`EvaluationJsonV0`等の実装 — ✅ 完了（2026-07-09）。`backend/app/schemas/asset_v0.py`・`evaluation_v0.py`
-9. **[downcast本体]** `asset_data + evaluation_data → spec_data`の実際の変換コード — ✅ **8/8ブロック完了**（2026-07-09、PR #65, #68, #69, #70）。`asset_meta`/`input_metadata`/`creative_core`/`diagnostics`/`performance`/`landing_page`/`views`/`_metadata`すべて実装・テスト済み（`_metadata.json_schema_version`のみ暫定固定値、正式な復元方法は未決定）。**ただし各ブロックの関数を1つの`spec_data`互換dictに組み立てる統合関数はまだ未実装**。統合関数の実装＋`resolve_spec_data`への実配線は次の「配線バッチ」で実施する方針（ユーザー明示指示）
+9. **[downcast本体]** `asset_data + evaluation_data → spec_data`の実際の変換コード — ✅ **完全完了**（2026-07-09、PR #65, #68, #69, #70, #71）。8ブロック全ての個別downcast関数＋統合関数`_downcast_to_spec_data()`＋`resolve_spec_data`への実配線まで完了。`_metadata.json_schema_version`のみ暫定固定値`"v0.2"`のまま（TODO明記、上記「json_schema_versionの配線方針」参照）
+
+**Phase 2（read adapter）はこれで実装完了**。残るのは本番DBマイグレーション適用（別タスク）とPhase 3（dual-write）。
 
 ---
 
@@ -448,12 +513,12 @@ Phase 2バッチ2で`AssetMetaV0.mode`が追加されたことで、当初「未
 - `docs/specs/ad_insight_json_schema_v0_2.md` — 現行`spec_data`のトップレベル構造
 - `docs/specs/video_cuts_json_schema_v1_0.md` — 新旧形状判定パターンの先行事例（`generation_status`キーの有無による判定）
 - `docs/specs/asset_evaluation_v0_schema.md` — asset_data/evaluation_data v0スキーマの現在の形（PR #68で新規作成）
-- `backend/app/services/asset_evaluation_adapter.py` — `resolve_spec_data`＋downcast部品8つ（`_downcast_asset_meta`/`_downcast_input_metadata`/`_downcast_creative_core`/`_downcast_diagnostics`/`_downcast_performance`/`_downcast_landing_page`/`_downcast_views`/`_downcast_metadata`、いずれも未配線）
-- `backend/tests/test_asset_evaluation_adapter.py` — 上記の単体テスト
+- `backend/app/services/asset_evaluation_adapter.py` — `resolve_spec_data`（**配線済み**）＋downcast部品8つ＋統合関数`_downcast_to_spec_data`
+- `backend/tests/test_asset_evaluation_adapter.py` — 上記の単体テスト＋統合テスト（`AdInsightSpec`バリデーション込み）
 - `backend/app/schemas/asset_v0.py` / `evaluation_v0.py` — v0スキーマ（Phase 1実装＋Phase 2バッチ2で`mode`/`file_paths`/`ocr_extracted_text`/`creative_core`追加）
 - `backend/tests/test_asset_v0_schema.py` — 上記の単体テスト
 - `backend/alembic/` — Phase 1実装済みのマイグレーション一式
 - `docs/DEPLOYMENT.md`（「1a. DBマイグレーション」） — Alembicの運用手順
 
 最終更新: 2026-07-09
-ステータス: Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施 ／ Phase 2 adapter scaffold・specs.py配線 実装済み ／ downcast: **8ブロック全て実装・テスト済み**（PR #65, #68, #69, #70。`_metadata.json_schema_version`のみ暫定固定値） ／ 次バッチ: 8ブロックを統合する関数の実装＋`resolve_spec_data`への実配線（配線バッチ、未着手）
+ステータス: 🟢🟢 **Phase 2（read adapter）実装完了**（PR #61, #65, #68, #69, #70, #71）。Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施。`resolve_spec_data`は8ブロック全てのdowncast＋`spec_data`パススルー＋fail-softの3分岐が完全実装済み。現行の全既存レコードへの挙動影響はゼロ（dual-write未実装のため）。残タスク: 本番DBマイグレーション適用（別途明示指示待ち）、Phase 3（dual-write実装）、`_metadata.json_schema_version`の正式なバージョニング戦略の確定
