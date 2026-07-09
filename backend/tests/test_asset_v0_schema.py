@@ -17,7 +17,8 @@ from app.schemas.asset_v0 import (
     CtaModalityEnum,
 )
 from app.schemas.evaluation_v0 import EvaluationJsonV0, EvaluationMetaV0
-from app.schemas.ad_insight import SourceTypeEnum, FormatEnum
+from app.schemas.ad_insight import SourceTypeEnum, FormatEnum, InputModeEnum, FilePaths
+from app.schemas.llm_response import CreativeCoreSchema, VisualsSchema, ToneSchema
 
 
 def _make_asset_meta_v0(**overrides) -> AssetMetaV0:
@@ -31,6 +32,7 @@ def _make_asset_meta_v0(**overrides) -> AssetMetaV0:
         "source_type": SourceTypeEnum.LOCAL_FILE,
         "source_ref": "/tmp/input.mp4",
         "created_at": datetime(2026, 7, 9, 12, 0, 0),
+        "mode": InputModeEnum.FILE_ONLY,
     }
     data.update(overrides)
     return AssetMetaV0(**data)
@@ -57,6 +59,57 @@ class TestAssetMetaV0SupersetOfLegacy:
     def test_invalid_asset_id_format_rejected(self):
         with pytest.raises(ValidationError):
             _make_asset_meta_v0(asset_id="not-a-valid-id")
+
+
+class TestAssetMetaV0Phase2Batch2Fields:
+    """Phase 2 downcastバッチ2で追加した mode/file_paths フィールド
+    （docs/plans/asset_evaluation_split_phase2_tasks.md「🗂 6項目の保存方針比較」）"""
+
+    def test_mode_is_required(self):
+        with pytest.raises(ValidationError):
+            _make_asset_meta_v0(mode=None)
+
+    def test_mode_accepts_existing_enum(self):
+        meta = _make_asset_meta_v0(mode=InputModeEnum.FILE_PLUS_LP_PLUS_MANUAL_KPI)
+        assert meta.mode == InputModeEnum.FILE_PLUS_LP_PLUS_MANUAL_KPI
+
+    def test_file_paths_is_optional(self):
+        meta = _make_asset_meta_v0()
+        assert meta.file_paths is None
+
+    def test_file_paths_accepts_existing_type(self):
+        meta = _make_asset_meta_v0(
+            file_paths=FilePaths(creative_video="/tmp/input.mp4", creative_images=None, landing_page_html=None)
+        )
+        assert meta.file_paths.creative_video == "/tmp/input.mp4"
+
+    def test_source_ref_and_file_paths_can_coexist(self):
+        """source_refとfile_pathsは意図的に別役割として両方持てる
+        （asset_v0.pyモジュールdocstring参照）"""
+        meta = _make_asset_meta_v0(
+            source_ref="/tmp/input.mp4",
+            file_paths=FilePaths(creative_video="/tmp/input.mp4", creative_images=None, landing_page_html=None),
+        )
+        assert meta.source_ref == "/tmp/input.mp4"
+        assert meta.file_paths.creative_video == "/tmp/input.mp4"
+
+
+class TestAssetStructureV0OcrExtractedText:
+    """Phase 2 downcastバッチ2で追加した ocr_extracted_text フィールド。
+    ocr_segments（カット単位OCR）とは別データであることを固定する。"""
+
+    def test_defaults_to_empty_string(self):
+        structure = AssetStructureV0()
+        assert structure.ocr_extracted_text == ""
+
+    def test_independent_from_ocr_segments(self):
+        structure = AssetStructureV0(
+            ocr_segments=[OcrSegment(text="カット単位のOCR", start_sec=0.0, end_sec=5.0)],
+            ocr_extracted_text="動画全体の単一OCRパス結果",
+        )
+        assert structure.ocr_segments[0].text == "カット単位のOCR"
+        assert structure.ocr_extracted_text == "動画全体の単一OCRパス結果"
+        assert structure.ocr_extracted_text != structure.ocr_segments[0].text
 
 
 class TestAssetJsonV0Construction:
@@ -139,3 +192,49 @@ class TestEvaluationJsonV0Construction:
         )
         result = json.loads(evaluation_meta.json())
         assert result["evaluated_at"] == "2026-07-09T12:30:00"
+
+
+class TestEvaluationJsonV0CreativeCore:
+    """Phase 2 downcastバッチ2で追加した creative_core フィールド
+    （llm_response.CreativeCoreSchemaをそのまま再利用、新規型は作らない）"""
+
+    def _make_evaluation(self, **overrides):
+        data = {
+            "evaluation_meta": EvaluationMetaV0(
+                evaluated_at=datetime(2026, 7, 9, 12, 30, 0),
+                evaluator_model="gpt-4o",
+            ),
+            "diagnostics": {
+                "qualitative": {
+                    "creative_fatigue_risk": "low",
+                    "creative_fatigue_basis": "テスト用の根拠テキストです",
+                }
+            },
+        }
+        data.update(overrides)
+        return EvaluationJsonV0(**data)
+
+    def test_creative_core_defaults_to_none(self):
+        evaluation = self._make_evaluation()
+        assert evaluation.creative_core is None
+
+    def test_creative_core_accepts_existing_llm_response_type(self):
+        evaluation = self._make_evaluation(
+            creative_core=CreativeCoreSchema(
+                visuals=VisualsSchema(
+                    dominant_colors=["#FF6B6B", "#FFFFFF"],
+                    composition="中央寄せの構図",
+                    style="モダン",
+                    clarity="高",
+                ),
+                tone=ToneSchema(
+                    primary_tone=["professional"],
+                    emotional_appeal="論理的",
+                    call_to_action="強",
+                ),
+                ai_labels=["finance", "trust"],
+            )
+        )
+        assert evaluation.creative_core.visuals.clarity == "高"
+        assert evaluation.creative_core.tone.emotional_appeal == "論理的"
+        assert evaluation.creative_core.ai_labels == ["finance", "trust"]
