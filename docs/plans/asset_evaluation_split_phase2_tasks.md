@@ -2,10 +2,11 @@
 
 **対象フェーズ**: Phase 2（read adapter設計・実装）＋ Phase 1（DBカラム追加・v0スキーマ導入、2026-07-09に公式化）
 **前提（2026-07-09 更新）**: Antigravity側のローカルPoC（`feature/asset-evaluation-split-phase1`、未push）はレビュー参考のみに使い、リポジトリには一切輸入しなかった。代わりに、本ドキュメントで洗い出したPoCの既知問題（`alembic.ini`の相対パス問題・`asset_meta`名称衝突・datetime JSON化の落とし穴）を踏まえて**このリポジトリ上でPhase 1を独自に設計・実装**した。現行 main の `AdInsight` モデルには `asset_data`/`evaluation_data` カラムが実在する（ブランチ`feature/asset-evaluation-phase1-columns-schemas`、下記参照）。
-**ステータス**: 🟢 Phase 1（カラム＋v0スキーマ）実装済み・ローカル検証済み ／ Phase 2第一段階（adapter scaffold）実装済み（PR #61）／ downcast変換ロジック本体は未実装
+**ステータス**: 🟢 Phase 1（カラム＋v0スキーマ）実装済み・ローカル検証済み ／ Phase 2第一段階（adapter scaffold）実装済み（PR #61）／ downcast第一バッチ（`_downcast_asset_meta`のみ、未配線）実装済み ／ downcast本体・配線は引き続き未実装
 **実装状況**:
 - Phase 1: `backend/alembic/`（baseline + カラム追加の2マイグレーション）、`AdInsight.asset_data`/`evaluation_data`カラム、`backend/app/schemas/asset_v0.py`・`evaluation_v0.py`を実装済み。**本番DBへのマイグレーション適用はまだ実施していない**（別途確認のうえ実施）。
-- Phase 2: `backend/app/services/asset_evaluation_adapter.py::resolve_spec_data`実装済み（PR #61）。`specs.py::get_spec`/`list_specs`への配線も実施済み（本ドキュメントの「specs.py 配線方針」で決めたとおり、カラム追加と同じPRで実施）。ただし`asset_data`/`evaluation_data`は常にNULL（dual-write未実装のため）で、実際のdowncast変換ロジックはまだ書かれていない（fail-softでspec_dataへフォールバックする）。本番のAPIレスポンス形状への影響は無い。
+- Phase 2 adapter scaffold: `backend/app/services/asset_evaluation_adapter.py::resolve_spec_data`実装済み（PR #61）。`specs.py::get_spec`/`list_specs`への配線も実施済み（本ドキュメントの「specs.py 配線方針」で決めたとおり、カラム追加と同じPRで実施）。ただし`asset_data`/`evaluation_data`は常にNULL（dual-write未実装のため）で、`resolve_spec_data`の公開挙動は無変換パススルーのまま。
+- Phase 2 downcast第一バッチ（2026-07-09）: `_downcast_asset_meta()`を実装（`asset_meta`のみを対象にした独立部品、単体テスト済み）。**`resolve_spec_data`にはまだ配線していない**（`input_metadata`/`creative_core`の変換元データが無く完全なdowncastができないため。下記オープン課題4・5参照）。既存API・CLIの挙動には一切影響なし。
 
 ---
 
@@ -56,13 +57,16 @@ def resolve_spec_data(
 
 | legacy `spec_data`のキー | 変換元 | 備考 |
 |---|---|---|
-| `asset_meta` | `asset_data.asset_meta`（`AssetMetaV0`、`backend/app/schemas/asset_v0.py`） | ✅ 解決済み（オープン課題1）。`AssetMetaV0`は`platform`/`campaign_name`/`adset_name`/`ad_name`/`analysis_period`/`external_ids`を含むlegacy `AssetMeta`のスーパーセットとして実装したため、null埋め不要でそのまま転記できる |
+| `input_metadata` | （変換元なし） | ❌ **未解決（オープン課題4、2026-07-09発見）**。`AssetJsonV0`/`EvaluationJsonV0`のどちらにも`mode`/`source_type`/`input_timestamp`/`file_paths`/`api_source`に対応するフィールドが無い。`AdInsightSpec.input_metadata`は必須フィールドのため、これが埋まらない限り完全なdowncastは不可能 |
+| `asset_meta` | `asset_data.asset_meta`（`AssetMetaV0`、`backend/app/schemas/asset_v0.py`） | ✅ 解決済み（オープン課題1）。`AssetMetaV0`は`platform`/`campaign_name`/`adset_name`/`ad_name`/`analysis_period`/`external_ids`を含むlegacy `AssetMeta`のスーパーセットとして実装したため、null埋め不要でそのまま転記できる。**2026-07-09: `_downcast_asset_meta()`として実装済み（`asset_evaluation_adapter.py`、単体テスト済み、`resolve_spec_data`へは未配線）** |
 | `creative_core.format` | `asset_data.media_info.media_type` | ✅ 解決済み。マッピング表を作らず、`MediaInfoV0.media_type`の型自体を既存`FormatEnum`（`app.schemas.ad_insight`）に統一したため変換不要 |
 | `creative_core.duration_seconds` | `asset_data.media_info.duration_seconds` | そのまま |
+| `creative_core`のその他フィールド（`primary_text`/`headline`/`body_text`/`call_to_action`/`visuals`/`tone`/`ai_labels`/`platform_specific`/`ocr_extracted_text`/`llm_model`/`llm_success`/`llm_retry_count`/`llm_error`） | （変換元なし） | ❌ **未解決（オープン課題5、2026-07-09発見）**。`AssetJsonV0`/`EvaluationJsonV0`は`format`と`duration_seconds`以外の`CreativeCore`フィールドに対応する変換元を持たない。`creative_core.format`は必須フィールドのため型自体は埋まるが、これらの自由文・分析系フィールドは埋められない |
 | `diagnostics` | `evaluation_data.diagnostics` | `EvaluationJsonV0.diagnostics`は既存`Diagnostics`型をそのまま再利用しているため、実質そのまま転記可能 |
-| `diagnostics.video_cuts.video_cuts[].start_seconds/end_seconds` | `asset_data.asset_structure.cuts[]`（`CutSpan`、`cut_id`で結合） | ✅ 解決済み（オープン課題2）。`CutSpan`（`asset_v0.py`）を唯一の時間情報の正本とし、`EvaluationJsonV0.diagnostics`側の`VideoCutContent.start_seconds/end_seconds`は定義しない（既存どおりOptional）。downcast実装時に`cut_id`で突き合わせて補完する |
+| `diagnostics.video_cuts.video_cuts[].start_seconds/end_seconds` | `asset_data.asset_structure.cuts[]`（`CutSpan`、`cut_id`で結合） | ✅ 解決済み（オープン課題2、方針のみ）。`CutSpan`（`asset_v0.py`）を唯一の時間情報の正本とし、`EvaluationJsonV0.diagnostics`側の`VideoCutContent.start_seconds/end_seconds`は定義しない（既存どおりOptional）。downcast実装時に`cut_id`で突き合わせて補完する。**変換コード自体は未実装（Phase 2 downcast第一バッチのスコープ外）** |
 | `performance` | `evaluation_data.performance` | そのまま |
 | `landing_page` | `evaluation_data.landing_page_analysis` | そのまま |
+| `views` | （変換元なし） | `AdInsightSpec.views`はOptionalのため、downcast時は省略（None）でよい。追加対応不要 |
 | `_metadata` | `asset_data.asset_meta`（`created_at`/`analysis_version`/`source_type`）+ `evaluation_data.evaluation_meta`（`evaluator_model`/`processing_time_ms`/`validation_status`/`validation_notes`/`analysis_tools_used`） | ✅ 解決済み（オープン課題3）。legacy `Metadata`の9フィールドを「取り込み時」と「評価実行時」に分割済み（`evaluation_v0.py`のdocstring参照）。`json_schema_version`の具体的な復元方法のみ、downcast実装時の判断として残す |
 
 ### 旧データ・新データの read path
@@ -136,22 +140,25 @@ diagnostics = resolved_spec_data.get("diagnostics", {}) or {}
 1. **`asset_meta`の名称衝突** — ✅ 解決済み。`AssetMetaV0`（`asset_v0.py`）はlegacy `AssetMeta`（`app/schemas/ad_insight.py`）の全フィールドを含むスーパーセットとして実装した。呼称は「legacy asset_meta」（spec_data側）／「v0 asset_meta」（asset_data側）で区別する。
 2. **カット情報の一次情報源** — ✅ 解決済み。`asset_data.asset_structure.cuts`（`CutSpan`）を一次情報源とし、`evaluation_data.diagnostics.video_cuts`側は既存`VideoCutContent`をそのまま再利用（`start_seconds`/`end_seconds`はOptionalのまま、独自定義しない）。
 3. **`_metadata`相当情報の再構成方針** — ✅ 解決済み。legacy `Metadata`の9フィールドを「取り込み時」（`AssetMetaV0`）と「評価実行時」（`EvaluationMetaV0`）に分割した。`json_schema_version`の具体的な復元式のみ、downcast実装時に決定する残課題として残る。
+4. **`input_metadata`の変換元が存在しない（2026-07-09、downcast第一バッチ着手時に発見）** — ❌ 未解決。`AdInsightSpec.input_metadata`（`mode`/`source_type`/`input_timestamp`/`file_paths`/`api_source`、必須フィールド）に対応するデータが`AssetJsonV0`/`EvaluationJsonV0`のどこにも無い。**推奨案（未確認・未実装）**: 既存`diagnostics`/`performance`/`landing_page`と同じ前例（新しい型を作らず既存型を再利用する）に倣い、`AssetJsonV0`に`input_metadata: InputMetadata`（`app.schemas.ad_insight`の既存型）フィールドを追加する。ただし実際に追加するかどうかはユーザー確認後に判断する。
+5. **`creative_core`の自由文・分析系フィールドの変換元が存在しない（2026-07-09、同上）** — ❌ 未解決。`primary_text`/`headline`/`body_text`/`call_to_action`/`visuals`/`tone`/`ai_labels`/`platform_specific`/`ocr_extracted_text`/`llm_model`/`llm_success`/`llm_retry_count`/`llm_error`に対応するデータが無い（`format`/`duration_seconds`のみ`MediaInfoV0`でカバー済み）。**推奨案（未確認・未実装）**: 課題4と同様、`EvaluationJsonV0`（LLM評価結果を格納する側）に`creative_core: CreativeCore`（既存型）フィールドを追加する案が最有力だが、`format`/`duration_seconds`は`asset_data.media_info`側に既に存在するため二重管理になる点の整理が必要。実装前にユーザー確認が必要。
 
-**残っている作業**: 上記はスキーマの「形」が変換可能になっただけで、`asset_data`+`evaluation_data`の実際のdictを`spec_data`互換dictへ変換するPythonコード（downcast本体）はまだ実装していない。これは次のタスク。
+**残っている作業**: オープン課題1〜3の解決（スキーマの「形」の確定）と、`_downcast_asset_meta()`（`asset_meta`のみ対象）の実装・単体テストまでは完了した。オープン課題4・5が未解決のため、**完全な**downcast（`spec_data`と同等の完全な形を再構築するコード）は実装できない。これは次のバッチのタスク。
 
 ---
 
 ## ✅ 実装タスク（issue粒度）
 
 1. **[設計]** 上記オープン課題1〜3を解決し、`spec_data`⇄(`asset_data`, `evaluation_data`)の完全なフィールド対応表を確定する — ✅ 完了（2026-07-09、`asset_v0.py`/`evaluation_v0.py`実装と同時）
-2. **[実装]** `resolve_spec_data(spec_data, asset_data=None, evaluation_data=None) -> dict`を実装 — ✅ 完了（PR #61）。旧データ（spec_dataのみ）の無変換パスのみ実装。**新データ変換パス（downcast本体）は未実装**（スキーマは確定したが、変換コード自体はまだ書かれていない）
-3. **[テスト]** `resolve_spec_data`の単体テスト — 🟡 一部完了（PR #61）。「両方None→無変換」「片方/両方非None→fail-softフォールバック＋警告ログ」は実装・テスト済み。「合成テストデータでの実際のdowncast変換」はdowncast本体が未実装のため未着手
+2. **[実装]** `resolve_spec_data(spec_data, asset_data=None, evaluation_data=None) -> dict`を実装 — ✅ 完了（PR #61）。旧データ（spec_dataのみ）の無変換パスのみ実装。**新データ変換パス（downcast本体）は未実装**（オープン課題4・5が未解決のため、完全なdowncastはまだ書けない）
+   - 2026-07-09追記: downcast第一バッチとして`_downcast_asset_meta()`を実装（`asset_meta`のみ対象、`resolve_spec_data`へは未配線）
+3. **[テスト]** `resolve_spec_data`の単体テスト — 🟡 一部完了（PR #61）。「両方None→無変換」「片方/両方非None→fail-softフォールバック＋警告ログ」は実装・テスト済み。「合成テストデータでの実際のdowncast変換」は`_downcast_asset_meta()`のみ実装・テスト済み。`resolve_spec_data`全体の統合downcastテストはオープン課題4・5解決後
 4. **[テスト]** `streamlit_app.py`のレンダリング関数が`resolve_spec_data`の新データ変換パス出力に対しても壊れずに表示できることの確認 — ⏳ 未着手（downcast本体が未実装のため対象がない）
 5. **[組み込み判断]** `specs.py::get_spec`/`list_specs`への`resolve_spec_data`組み込み — ✅ 完了（2026-07-09、カラム追加と同じPRで実施）
 6. **[ドキュメント]** 本ファイルの対応表を確定版として更新し、`docs/specs/`配下に正式スキーマドキュメントを作成 — 🟡 本ファイルの対応表は確定済み。`docs/specs/`配下への独立ドキュメント化はまだ未着手
 7. **[Phase 1: カラム追加]** `AdInsight.asset_data`/`evaluation_data`カラム追加、Alembic導入 — ✅ 完了（2026-07-09）。`backend/alembic/`にbaseline+カラム追加の2マイグレーション、`backend/app/models/ad_insight.py`にカラム追加。**本番DBへの適用は未実施**（別途確認のうえ実施）
 8. **[Phase 1: v0スキーマ]** `AssetJsonV0`/`EvaluationJsonV0`等の実装 — ✅ 完了（2026-07-09）。`backend/app/schemas/asset_v0.py`・`evaluation_v0.py`
-9. **[次のタスク]** downcast本体（`asset_data + evaluation_data → spec_data`の実際の変換コード）の実装 — ⏳ 未着手。dual-write（Phase 3）が始まり、実際に`asset_data`/`evaluation_data`が入ったレコードが出てくる前後で着手する想定
+9. **[downcast本体]** `asset_data + evaluation_data → spec_data`の実際の変換コード — 🟡 一部着手（2026-07-09）。`_downcast_asset_meta()`（`asset_meta`のみ）を実装・テスト済み、`resolve_spec_data`へは未配線。残り（`diagnostics`のvideo_cuts補完、および課題4・5解決後の`input_metadata`/`creative_core`）は次のバッチ
 
 ---
 
@@ -166,4 +173,4 @@ diagnostics = resolved_spec_data.get("diagnostics", {}) or {}
 - `docs/DEPLOYMENT.md`（「1a. DBマイグレーション」） — Alembicの運用手順
 
 最終更新: 2026-07-09
-ステータス: Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施 ／ Phase 2 adapter scaffold・specs.py配線 実装済み ／ downcast本体は未着手
+ステータス: Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施 ／ Phase 2 adapter scaffold・specs.py配線 実装済み ／ downcast第一バッチ（`_downcast_asset_meta`、未配線）実装済み ／ downcast本体（完全版）はオープン課題4・5の解決待ち
