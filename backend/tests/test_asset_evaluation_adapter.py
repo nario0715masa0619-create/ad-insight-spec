@@ -1,6 +1,6 @@
 import logging
 
-from app.services.asset_evaluation_adapter import resolve_spec_data
+from app.services.asset_evaluation_adapter import resolve_spec_data, _downcast_asset_meta
 
 
 SAMPLE_SPEC_DATA = {
@@ -62,3 +62,86 @@ class TestResolveSpecDataForwardCompatibility:
                 evaluation_data={"diagnostics": {}},
             )
         assert result == SAMPLE_SPEC_DATA
+
+
+class TestDowncastAssetMetaNotWired:
+    """_downcast_asset_meta はPhase 2 downcast第一バッチの部品だが、resolve_spec_data
+    からはまだ呼ばれない（input_metadata/creative_coreの変換元が無いため、resolve_spec_data
+    は引き続き既存のfail-soft挙動のまま）ことを固定する。"""
+
+    def test_resolve_spec_data_does_not_call_downcast_asset_meta(self, caplog):
+        """asset_dataにasset_metaを含めて渡しても、resolve_spec_dataの戻り値は
+        依然としてspec_dataへのfail-softフォールバックのままであること
+        （_downcast_asset_metaの出力に置き換わっていないこと）を確認する。"""
+        with caplog.at_level(logging.WARNING):
+            result = resolve_spec_data(
+                SAMPLE_SPEC_DATA,
+                asset_data={
+                    "asset_meta": {
+                        "asset_id": "asset_meta_test_9999",
+                        "platform": "meta",
+                        "source_type": "local_file",
+                    }
+                },
+            )
+        assert result == SAMPLE_SPEC_DATA
+        assert result["asset_meta"]["asset_id"] == "asset_meta_test_0001"
+
+
+class TestDowncastAssetMeta:
+    """_downcast_asset_meta 単体テスト（オープン課題1の解決: AssetMetaV0はlegacy AssetMetaの
+    スーパーセットのため、legacy側のキーをそのまま転記するだけでよいことを検証する）"""
+
+    def test_legacy_fields_are_copied_through_unchanged(self):
+        asset_meta_v0 = {
+            "asset_id": "asset_meta_test_0001",
+            "asset_name": "テスト素材",
+            "platform": "meta",
+            "ad_account_id": "act_123",
+            "campaign_name": "テストキャンペーン",
+            "adset_name": "テストアドセット",
+            "ad_name": "テスト広告",
+            "analysis_period": {"start": "2026-07-01", "end": "2026-07-31"},
+            "external_ids": {"meta_ad_id": "1234567890"},
+            # v0専用フィールド（legacyには存在しないため出力から除外されるはず）
+            "source_type": "local_file",
+            "source_ref": "/tmp/input.mp4",
+            "created_at": "2026-07-09T12:00:00",
+            "analysis_version": "v0",
+        }
+        result = _downcast_asset_meta(asset_meta_v0)
+        assert result == {
+            "asset_id": "asset_meta_test_0001",
+            "asset_name": "テスト素材",
+            "platform": "meta",
+            "ad_account_id": "act_123",
+            "campaign_name": "テストキャンペーン",
+            "adset_name": "テストアドセット",
+            "ad_name": "テスト広告",
+            "analysis_period": {"start": "2026-07-01", "end": "2026-07-31"},
+            "external_ids": {"meta_ad_id": "1234567890"},
+        }
+
+    def test_v0_only_fields_are_dropped(self):
+        result = _downcast_asset_meta({
+            "asset_id": "asset_meta_test_0001",
+            "source_type": "local_file",
+            "source_ref": "/tmp/input.mp4",
+            "created_at": "2026-07-09T12:00:00",
+            "analysis_version": "v0",
+        })
+        assert "source_type" not in result
+        assert "source_ref" not in result
+        assert "created_at" not in result
+        assert "analysis_version" not in result
+
+    def test_missing_optional_legacy_fields_are_omitted_not_null_padded(self):
+        """asset_meta_v0側に無いキーは、None埋めせず出力からも省く
+        （欠損の扱いはlegacy AssetMeta側のOptional性に委ねる方針）"""
+        result = _downcast_asset_meta({"asset_id": "asset_meta_test_0001"})
+        assert result == {"asset_id": "asset_meta_test_0001"}
+        assert "platform" not in result
+        assert "campaign_name" not in result
+
+    def test_empty_input_returns_empty_dict(self):
+        assert _downcast_asset_meta({}) == {}
