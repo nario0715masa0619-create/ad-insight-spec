@@ -96,6 +96,10 @@ streamlit run frontend/streamlit_app.py
 | Phase 2c-2 | OCRService 統合 (Tesseract, 画像/動画フレーム対応) | ✅ 完了 |
 | Phase 2c-3 | AnalysisOrchestrator と ConverterService の完成 | ✅ 完了 |
 
+> 上表がこのプロジェクトの現在地です。`docs/phase1_final_summary.md`・`docs/plans/phase2a_backlog.md`・
+> `docs/plans/phase2a_design_decisions.md`は各Phase着手前の初期計画メモ（historical planning docs）であり、
+> 実装状況を反映していません。現状確認は本ファイルと現行コードを参照してください。
+
 ## 主要機能
 
 - **3つの入力モード**:

@@ -1,5 +1,13 @@
 # Phase 2a 設計判断 (Persistence & API)
 
+> ⚠️ **Historical planning doc（2026-06-23頃の記録）**
+> この文書は Phase 2a 着手時点の設計決定記録であり、その後の実装状況を反映していません。
+> **現在の実装状況は [README.md](../../README.md) と現行コードを参照してください。**
+> README.md記載のとおり、Phase 2a は既に完了済みです。本文書が決定した「JSON正本主義」
+> （`AdInsight.spec_data`を単一JSON正本とする方針）は実際に採用され、
+> `backend/app/models/ad_insight.py` / `backend/app/api/routes/specs.py` /
+> `backend/app/repositories/ad_insight_repository.py` として実装・本番稼働中です。
+
 ## 1. 永続化方針
 - **JSON正本主義**: `ad_insight_spec` 全体の解析結果などを JSON（または JSONB 相当）の正本データとして保持する。
 - **検索用項目**: 一覧表示や検索で利用する最低限の項目（`asset_id`, 作成日時など）のみ、独立したカラムとして冗長保持する。
