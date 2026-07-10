@@ -35,10 +35,39 @@ Phase 2の read adapter（`resolve_spec_data`のdowncast本体）はこのリポ
 `json.dump(..., default=str)`で保険をかけて修正した。新設の`asset_data`/`evaluation_data`自体は
 `json.loads(model.json())`経由で既にJSON-safeなため、`default=str`には依存していない。
 
+`default=str`は既知のdatetime問題に対する保険として入れたが、実装上はdatetime以外の
+「JSON化できない値」全般（想定外の実装ミスによる混入等）も無条件にstr()化してしまう
+トレードオフがある。CLI出力は人が目視確認する運用（自動検証なし）である前提のもと、
+「JSON化自体が失敗してCLIが丸ごとエラー終了する」よりは許容する意図的な選択である
+（詳細は`backend/app/cli/main.py`のコメント参照）。
+
+## PR #73 レビュー指摘への対応（follow-up、`feature/asset-evaluation-p1-fixes`）
+
+1. **evaluation_data.diagnosticsがdecision_support_diffを欠く**（`specs.py`）:
+   `asset_data`/`evaluation_data`の抽出を`decision_support_diff`計算の後に移動し、
+   `evaluation_data.diagnostics`にも同じdiffを注入するようにした。レスポンス内の
+   `diagnostics`（legacy）と`evaluation_data.diagnostics`が常に一致する。
+2. **ocr_segmentsのNoneタイミング防御漏れ**（`converter_service.py`）:
+   1件ずつtry/exceptで構築し、壊れたエントリはそのセグメントだけスキップして
+   警告ログを出す（`asset_data`/`evaluation_data`全体を巻き込まない）。
+3. **`_parse_dimensions`の型安全性**（`converter_service.py`）:
+   `resolution`/`width_pixels`/`height_pixels`の型チェックを追加し、非文字列や
+   非intの値でも例外を投げず契約通り`(None, None)`を返すようにした。
+4. 上記2・3の現実的な部分故障ケース（Noneタイミング、非文字列resolution等）を
+   `test_converter_service.py`に追加し、fail-soft挙動を自動テストでロックした。
+5. `/analyze`エンドポイント自体の配線（`asset_data`/`evaluation_data`のレスポンス
+   反映、DB保存の非変更、decision_support_diffの一貫性）を検証する
+   `backend/tests/test_analyze_endpoint.py`を新規追加（このリポジトリ初の
+   TestClientベースのエンドポイントテスト。`AnalysisOrchestrator.run()`をモックし、
+   実I/Oを伴わない）。
+6. `default=str`の設計意図を`cli/main.py`のコメントと本ドキュメントに明記（上記参照）。
+
 ## テスト
 
 - `backend/tests/test_converter_service.py`: `_build_asset_evaluation_v0`の単体テスト
-  （フル入力/`file_only`最小入力、寸法パース、fail-soft、JSON直列化）。
+  （フル入力/`file_only`最小入力、寸法パース、fail-soft、JSON直列化、部分故障ケース）。
 - `backend/tests/test_orchestrator_asset_evaluation_wiring.py`: `AnalysisOrchestrator.run()`レベルの配線テスト
   （`video_cuts`の伝播、`processing_time_ms`の後上書き、CLI相当のJSON直列化）。
+- `backend/tests/test_analyze_endpoint.py`: `/analyze`エンドポイントのTestClientテスト
+  （asset_data/evaluation_dataのレスポンス反映、DB保存の非変更、decision_support_diffの一貫性）。
 - 既存テストスイートに回帰なし（`test_llm_service.py`の4件はGPT/Gemini一貫性テストの既知の無関係な失敗）。

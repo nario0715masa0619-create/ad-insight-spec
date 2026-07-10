@@ -248,6 +248,89 @@ class TestDimensionParsing:
         width, height = service._parse_dimensions({"resolution": "not-a-resolution"})
         assert (width, height) == (None, None)
 
+    def test_returns_none_on_non_string_resolution(self):
+        """回帰テスト: resolutionが文字列でない場合にTypeErrorで落ちず、
+        契約通り(None, None)を返すこと（PR #73レビュー指摘）"""
+        service = ConverterService()
+        width, height = service._parse_dimensions({"resolution": 12345})
+        assert (width, height) == (None, None)
+
+    def test_returns_none_when_width_height_pixels_are_wrong_type(self):
+        service = ConverterService()
+        width, height = service._parse_dimensions({"width_pixels": "100", "height_pixels": "200"})
+        assert (width, height) == (None, None)
+
+    def test_execute_does_not_crash_with_non_string_resolution(self):
+        """_parse_dimensions単体だけでなく、execute()全体を通しても
+        asset_data/evaluation_dataが失われないこと（他フィールドは正常なため）"""
+        service = ConverterService()
+        result = service.execute(
+            mode="file_only",
+            ingestion_result=_image_ingestion_result(),
+            metadata_result={"asset_id": "asset_test_conv_0004", "resolution": 12345},
+            lp_result=None,
+            video_result={},
+            ocr_result=_ocr_result(),
+            llm_result=_llm_result(),
+            kpi_result=None,
+        )
+        assert result["asset_data"] is not None
+        assert result["asset_data"]["media_info"]["width"] is None
+        assert result["asset_data"]["media_info"]["height"] is None
+
+
+class TestOcrSegmentsPartialFailure:
+    """1件の壊れたvideo_cutsエントリがasset_data/evaluation_data全体を
+    消さないことのテスト（PR #73レビュー指摘: ocr_segmentsのNoneタイミング防御漏れ）"""
+
+    def _run_with_video_cuts(self, video_cuts):
+        service = ConverterService()
+        return service.execute(
+            mode="file_only",
+            ingestion_result=_video_ingestion_result(),
+            metadata_result=_video_metadata_result(),
+            lp_result=None,
+            video_result={},
+            ocr_result=_ocr_result(),
+            llm_result=_llm_result(),
+            kpi_result=None,
+            video_cuts=video_cuts,
+        )
+
+    def test_malformed_ocr_timing_does_not_wipe_out_asset_or_evaluation_data(self):
+        result = self._run_with_video_cuts([
+            {"cut_id": "cut_1", "start_seconds": 0.0, "end_seconds": 5.0, "ocr_text": ""},
+            # ocr_textはあるがタイミングがNone（壊れたエントリ）
+            {"cut_id": "cut_2", "start_seconds": None, "end_seconds": None, "ocr_text": "テロップ"},
+        ])
+        assert result["asset_data"] is not None
+        assert result["evaluation_data"] is not None
+
+    def test_valid_cuts_are_kept_when_a_sibling_ocr_entry_is_malformed(self):
+        result = self._run_with_video_cuts([
+            {"cut_id": "cut_1", "start_seconds": 0.0, "end_seconds": 5.0, "ocr_text": ""},
+            {"cut_id": "cut_2", "start_seconds": None, "end_seconds": None, "ocr_text": "テロップ"},
+        ])
+        cuts = result["asset_data"]["asset_structure"]["cuts"]
+        assert cuts == [{"cut_id": "cut_1", "start_sec": 0.0, "end_sec": 5.0}]
+
+    def test_malformed_ocr_entry_itself_is_skipped_not_fabricated(self):
+        result = self._run_with_video_cuts([
+            {"cut_id": "cut_1", "start_seconds": 0.0, "end_seconds": 5.0, "ocr_text": ""},
+            {"cut_id": "cut_2", "start_seconds": None, "end_seconds": None, "ocr_text": "テロップ"},
+        ])
+        ocr_segments = result["asset_data"]["asset_structure"]["ocr_segments"]
+        assert ocr_segments == []
+
+    def test_valid_ocr_entries_still_included_alongside_a_malformed_one(self):
+        result = self._run_with_video_cuts([
+            {"cut_id": "cut_1", "start_seconds": 0.0, "end_seconds": 5.0, "ocr_text": "正常なテロップ"},
+            {"cut_id": "cut_2", "start_seconds": None, "end_seconds": None, "ocr_text": "壊れたエントリ"},
+        ])
+        ocr_segments = result["asset_data"]["asset_structure"]["ocr_segments"]
+        assert len(ocr_segments) == 1
+        assert ocr_segments[0]["text"] == "正常なテロップ"
+
 
 class TestFailSoftGeneration:
     """asset_data/evaluation_data の生成失敗はspec_dataの返却をブロックしない"""

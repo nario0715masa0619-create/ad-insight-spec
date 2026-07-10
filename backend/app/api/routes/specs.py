@@ -207,13 +207,6 @@ async def analyze(
                 spec_data=spec_data_jsonable
             )
 
-            # asset_data/evaluation_data (v0) はDBには保存しないが、生成ロジック
-            # (ConverterService._build_asset_evaluation_v0) の結果をAPIレスポンスには
-            # 含める。AdInsightSpec は未知フィールドを無視するため、spec_data_jsonable
-            # 側（spec経由）には含まれない。元の spec_dict から直接取り出す。
-            asset_data = spec_dict.get("asset_data")
-            evaluation_data = spec_dict.get("evaluation_data")
-
             logger.info(
                 "Analysis completed successfully",
                 extra={
@@ -228,6 +221,20 @@ async def analyze(
             decision_support_diff = _build_decision_support_diff(current_decision_support, previous_record)
             if decision_support_diff:
                 spec_data_jsonable.setdefault("diagnostics", {})["decision_support_diff"] = decision_support_diff
+
+            # asset_data/evaluation_data (v0) はDBには保存しないが、生成ロジック
+            # (ConverterService._build_asset_evaluation_v0) の結果をAPIレスポンスには
+            # 含める。AdInsightSpec は未知フィールドを無視するため、spec_data_jsonable
+            # 側（spec経由）には含まれない。元の spec_dict から直接取り出す。
+            # decision_support_diff の注入より後で取り出すのは、レスポンス内の
+            # evaluation_data.diagnostics と 直下の diagnostics（legacy）とで
+            # decision_support_diff の有無が食い違わないようにするため
+            # （PR #73 レビュー指摘: evaluation_data.diagnostics だけ古い内容の
+            # まま返っていた）。
+            asset_data = spec_dict.get("asset_data")
+            evaluation_data = spec_dict.get("evaluation_data")
+            if evaluation_data and decision_support_diff:
+                evaluation_data.setdefault("diagnostics", {})["decision_support_diff"] = decision_support_diff
 
             # UI 側で「この場で作成した版」を selected_version として保持できるよう、
             # DB 確定後の version をレスポンスに追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）

@@ -224,11 +224,29 @@ class ConverterService(BaseService):
             and c.get("start_seconds") is not None
             and c.get("end_seconds") is not None
         ]
-        ocr_segments = [
-            OcrSegment(text=c["ocr_text"], start_sec=c["start_seconds"], end_sec=c["end_seconds"])
-            for c in video_cuts
-            if c.get("ocr_text")
-        ]
+        # cutsとは別に、1件ずつtry/exceptで構築する。cuts側はNoneチェックのみで
+        # 弾けるが、ocr_segmentsは型不正（例: start_seconds/end_secondsが
+        # 数値以外）等、Noneチェックだけでは防ぎきれない壊れ方もあり得る。
+        # ここで1件だけ弾いても、他の正常なカット・asset_data/evaluation_data
+        # 全体には影響させない（呼び出し元execute()の外側try/exceptに頼らず、
+        # このレベルでfail-softにする）。
+        ocr_segments: List[OcrSegment] = []
+        for c in video_cuts:
+            if not c.get("ocr_text"):
+                continue
+            try:
+                ocr_segments.append(
+                    OcrSegment(
+                        text=c["ocr_text"],
+                        start_sec=c.get("start_seconds"),
+                        end_sec=c.get("end_seconds"),
+                    )
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Skipping malformed video_cuts OCR segment "
+                    f"(cut_id={c.get('cut_id')!r}): {e}"
+                )
         asset_structure_v0 = AssetStructureV0(
             cuts=cuts,
             transcript_segments=[],  # ASRはセグメント単位のタイムスタンプを保持していないため空
@@ -269,15 +287,17 @@ class ConverterService(BaseService):
 
         画像は width_pixels/height_pixels、動画は "1920x1080" 形式の
         resolution 文字列で来るため、フォーマットを揃える。どちらも
-        取れない場合は捏造せず (None, None) を返す。
+        取れない、または型が想定と違う場合も例外を投げず、捏造せず
+        (None, None) を返す（呼び出し元がメタデータをどう組み立てて来ても、
+        このヘルパー自体は落ちない契約にする）。
         """
         width = metadata_result.get("width_pixels")
         height = metadata_result.get("height_pixels")
-        if width is not None and height is not None:
+        if isinstance(width, int) and isinstance(height, int):
             return width, height
 
         resolution = metadata_result.get("resolution")
-        if resolution and "x" in resolution:
+        if isinstance(resolution, str) and "x" in resolution:
             try:
                 width_str, height_str = resolution.split("x", 1)
                 return int(width_str), int(height_str)
