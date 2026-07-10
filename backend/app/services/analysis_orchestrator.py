@@ -132,7 +132,13 @@ class AnalysisOrchestrator:
             # Add processing time to spec
             if self.final_spec and "_metadata" in self.final_spec:
                 self.final_spec["_metadata"]["processing_time_ms"] = processing_time_ms
-            
+
+            # evaluation_data.evaluation_meta.processing_time_ms も同様に、
+            # 全ステップ完了後の実測値で上書きする（_step_converter時点では
+            # まだ確定していないため、_metadataと同じタイミングでここに置く）。
+            if self.final_spec and self.final_spec.get("evaluation_data"):
+                self.final_spec["evaluation_data"]["evaluation_meta"]["processing_time_ms"] = processing_time_ms
+
             return self.final_spec or {}
 
         except Exception as e:
@@ -575,6 +581,7 @@ class AnalysisOrchestrator:
                 ocr_result=self.ocr_result or {},
                 llm_result=self.llm_result or {},
                 kpi_result=self.kpi_data,
+                video_cuts=self.video_cuts,
             )
             logger.info("Conversion to ad_insight_spec complete")
         except Exception as e:

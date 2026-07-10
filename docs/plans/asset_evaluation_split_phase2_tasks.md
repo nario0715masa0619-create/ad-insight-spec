@@ -3,6 +3,10 @@
 **対象フェーズ**: Phase 2（read adapter設計・実装）＋ Phase 1（DBカラム追加・v0スキーマ導入、2026-07-09に公式化）
 **前提（2026-07-09 更新）**: Antigravity側のローカルPoC（`feature/asset-evaluation-split-phase1`、未push）はレビュー参考のみに使い、リポジトリには一切輸入しなかった。代わりに、本ドキュメントで洗い出したPoCの既知問題（`alembic.ini`の相対パス問題・`asset_meta`名称衝突・datetime JSON化の落とし穴）を踏まえて**このリポジトリ上でPhase 1を独自に設計・実装**した。現行 main の `AdInsight` モデルには `asset_data`/`evaluation_data` カラムが実在する（ブランチ`feature/asset-evaluation-phase1-columns-schemas`、下記参照）。
 **ステータス**: 🟢 Phase 1（カラム＋v0スキーマ）実装済み・ローカル検証済み ／ Phase 2第一段階（adapter scaffold）実装済み（PR #61）／ downcast変換ロジック本体は未実装
+
+**関連（別軸の作業）**: `asset_data`/`evaluation_data`の生成ロジック実装（write側、この read adapter には非依存）は
+`docs/plans/asset_evaluation_p1_generation_logic.md` を参照。DBへのdual-writeはまだ行っていない。
+
 **実装状況**:
 - Phase 1: `backend/alembic/`（baseline + カラム追加の2マイグレーション）、`AdInsight.asset_data`/`evaluation_data`カラム、`backend/app/schemas/asset_v0.py`・`evaluation_v0.py`を実装済み。**本番DBへのマイグレーション適用はまだ実施していない**（別途確認のうえ実施）。
 - Phase 2: `backend/app/services/asset_evaluation_adapter.py::resolve_spec_data`実装済み（PR #61）。`specs.py::get_spec`/`list_specs`への配線も実施済み（本ドキュメントの「specs.py 配線方針」で決めたとおり、カラム追加と同じPRで実施）。ただし`asset_data`/`evaluation_data`は常にNULL（dual-write未実装のため）で、実際のdowncast変換ロジックはまだ書かれていない（fail-softでspec_dataへフォールバックする）。本番のAPIレスポンス形状への影響は無い。
