@@ -102,8 +102,15 @@ def analyze(
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # spec (= orchestrator.run()の戻り値) は ConverterService が
+        # spec.dict()（.json()ではない）で組み立てているため、input_timestamp等の
+        # datetimeフィールドは生のdatetimeオブジェクトのまま残る（既知の
+        # .dict() vs .json() 落とし穴、P1で新設したasset_data/evaluation_data
+        # 自体はjson.loads(model.json())経由でJSON-safe化済み）。
+        # default=str はこの既存項目に対する保険であり、新規追加分の挙動には
+        # 影響しない。
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(spec, f, indent=2, ensure_ascii=False)
+            json.dump(spec, f, indent=2, ensure_ascii=False, default=str)
         
         click.echo()
         click.echo("=" * 80)

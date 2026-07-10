@@ -199,13 +199,21 @@ async def analyze(
             else:
                 spec_data_jsonable = json.loads(spec.json())
             
-            # DB に保存
+            # DB に保存（spec_data のみ。asset_data/evaluation_dataのdual-writeは
+            # まだ実施しない＝DB保存挙動はP1のスコープ外で変更していない）
             db_record = repo.create(
                 asset_id=asset_id,
                 format=spec.creative_core.format,
                 spec_data=spec_data_jsonable
             )
-            
+
+            # asset_data/evaluation_data (v0) はDBには保存しないが、生成ロジック
+            # (ConverterService._build_asset_evaluation_v0) の結果をAPIレスポンスには
+            # 含める。AdInsightSpec は未知フィールドを無視するため、spec_data_jsonable
+            # 側（spec経由）には含まれない。元の spec_dict から直接取り出す。
+            asset_data = spec_dict.get("asset_data")
+            evaluation_data = spec_dict.get("evaluation_data")
+
             logger.info(
                 "Analysis completed successfully",
                 extra={
@@ -227,6 +235,8 @@ async def analyze(
                 **spec_data_jsonable,
                 "version": db_record.version,
                 "created_at": db_record.created_at.isoformat(),
+                "asset_data": asset_data,
+                "evaluation_data": evaluation_data,
             }
         
         finally:
