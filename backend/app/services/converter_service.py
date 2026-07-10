@@ -12,7 +12,7 @@ Input: Results from all upstream services
 Output: ad_insight_spec dict (validated against Pydantic v0.2)
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import logging
 import json
@@ -56,10 +56,11 @@ class ConverterService(BaseService):
         ocr_result: Dict[str, Any],
         llm_result: Dict[str, Any],
         kpi_result: Optional[Dict[str, Any]] = None,
+        video_cuts: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Convert all analysis results to ad_insight_spec v0.2.
-        
+
         Args:
             mode (str): file_only / file_plus_lp / file_plus_lp_plus_manual_kpi
             ingestion_result (dict): From IngestionService
@@ -69,10 +70,17 @@ class ConverterService(BaseService):
             ocr_result (dict): From OCRService
             llm_result (dict): From LLMService
             kpi_result (dict): Optional KPI data
-        
+            video_cuts (list): Optional. AnalysisOrchestrator.video_cuts と同一形式
+                （[{cut_id, start_seconds, end_seconds, frame_path, ocr_text}, ...]）。
+                asset_data.asset_structure.cuts/ocr_segments の一次情報源として使う
+                （動画以外、またはカット検出なしの場合は None/空リストで可）。
+
         Returns:
-            dict: ad_insight_spec v0.2 (validated by Pydantic)
-        
+            dict: ad_insight_spec v0.2（validated by Pydantic）に加えて、
+                asset_data / evaluation_data（AssetJsonV0 / EvaluationJsonV0 を
+                JSON-safeなdictにしたもの。構築に失敗した場合は両方Noneのまま
+                fail-softで、spec_data側の返却は妨げない）を含む。
+
         Raises:
             ValidationError: If conversion fails
             ProcessingError: If Pydantic validation fails
@@ -112,7 +120,26 @@ class ConverterService(BaseService):
             
             # Convert back to dict for JSON serialization
             result = spec.dict(by_alias=True, exclude_none=False)
-            
+
+            # asset_data / evaluation_data (v0) の生成。spec_data の正本性・
+            # 保存経路には一切影響させない fail-soft 処理（失敗時は両方None、
+            # spec_data 側の返却は継続する）。
+            asset_data: Optional[Dict[str, Any]] = None
+            evaluation_data: Optional[Dict[str, Any]] = None
+            try:
+                asset_data, evaluation_data = self._build_asset_evaluation_v0(
+                    ingestion_result=ingestion_result,
+                    metadata_result=metadata_result,
+                    video_cuts=video_cuts or [],
+                    spec=spec,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"AssetJson/EvaluationJson generation failed (non-fatal, spec_data unaffected): {str(e)}"
+                )
+            result["asset_data"] = asset_data
+            result["evaluation_data"] = evaluation_data
+
             self.logger.info("Conversion complete: ad_insight_spec v0.2")
             return result
         
@@ -124,6 +151,160 @@ class ConverterService(BaseService):
     def validate_input(self, *args, **kwargs) -> bool:
         """Input validation (basic)"""
         return True
+
+    def _build_asset_evaluation_v0(
+        self,
+        ingestion_result: Dict[str, Any],
+        metadata_result: Dict[str, Any],
+        video_cuts: List[Dict[str, Any]],
+        spec: AdInsightSpec,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        asset_data (AssetJsonV0) / evaluation_data (EvaluationJsonV0) を構築する。
+
+        spec_data と重複する項目（asset_meta のlegacy互換フィールド、
+        diagnostics/performance/landing_page_analysis）は、二重に組み立てると
+        フィールド追加時にドリフトするため、既にPydantic検証済みの `spec` から
+        再利用する。ここで新規に組み立てるのは、asset/evaluation分割で新設した
+        v0専用フィールド（source_type/source_ref/created_at、media_info、
+        asset_structure.cuts/ocr_segments、evaluation_meta）のみ。
+
+        現在のパイプラインからは honest に埋められない項目（asset_annotations、
+        transcript_segments）は、捏造しない方針によりスキーマのデフォルト
+        （空リスト/None）のままにする。将来 ASR セグメント単位のタイムスタンプや
+        ブランド/CTA検出が実装されたら、ここを拡張する。
+
+        Returns:
+            (asset_data dict, evaluation_data dict): いずれも
+            `json.loads(model.json())` を経由したJSON-safeなdict
+            （datetime直列化の既知バグを避けるため、`.dict()`は使わない）。
+        """
+        from app.schemas.asset_v0 import (
+            AssetJsonV0,
+            AssetMetaV0,
+            MediaInfoV0,
+            AssetStructureV0,
+            AssetAnnotationsV0,
+            CutSpan,
+            OcrSegment,
+        )
+        from app.schemas.evaluation_v0 import EvaluationJsonV0, EvaluationMetaV0
+
+        asset_meta_v0 = AssetMetaV0(
+            asset_id=spec.asset_meta.asset_id,
+            asset_name=spec.asset_meta.asset_name,
+            platform=spec.asset_meta.platform,
+            ad_account_id=spec.asset_meta.ad_account_id,
+            campaign_name=spec.asset_meta.campaign_name,
+            adset_name=spec.asset_meta.adset_name,
+            ad_name=spec.asset_meta.ad_name,
+            analysis_period=spec.asset_meta.analysis_period,
+            external_ids=spec.asset_meta.external_ids,
+            source_type=spec.input_metadata.source_type,
+            source_ref=ingestion_result.get("file_path"),
+            created_at=datetime.now(),
+            analysis_version="v0",
+        )
+
+        width, height = self._parse_dimensions(metadata_result)
+        media_info_v0 = MediaInfoV0(
+            media_type=spec.creative_core.format,
+            duration_seconds=spec.creative_core.duration_seconds,
+            width=width,
+            height=height,
+            fps=metadata_result.get("fps"),
+            aspect_ratio=None,  # 現行パイプラインでは未算出（捏造しない）
+            language=metadata_result.get("language"),
+        )
+
+        cuts = [
+            CutSpan(cut_id=c["cut_id"], start_sec=c["start_seconds"], end_sec=c["end_seconds"])
+            for c in video_cuts
+            if c.get("cut_id") is not None
+            and c.get("start_seconds") is not None
+            and c.get("end_seconds") is not None
+        ]
+        # cutsとは別に、1件ずつtry/exceptで構築する。cuts側はNoneチェックのみで
+        # 弾けるが、ocr_segmentsは型不正（例: start_seconds/end_secondsが
+        # 数値以外）等、Noneチェックだけでは防ぎきれない壊れ方もあり得る。
+        # ここで1件だけ弾いても、他の正常なカット・asset_data/evaluation_data
+        # 全体には影響させない（呼び出し元execute()の外側try/exceptに頼らず、
+        # このレベルでfail-softにする）。
+        ocr_segments: List[OcrSegment] = []
+        for c in video_cuts:
+            if not c.get("ocr_text"):
+                continue
+            try:
+                ocr_segments.append(
+                    OcrSegment(
+                        text=c["ocr_text"],
+                        start_sec=c.get("start_seconds"),
+                        end_sec=c.get("end_seconds"),
+                    )
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Skipping malformed video_cuts OCR segment "
+                    f"(cut_id={c.get('cut_id')!r}): {e}"
+                )
+        asset_structure_v0 = AssetStructureV0(
+            cuts=cuts,
+            transcript_segments=[],  # ASRはセグメント単位のタイムスタンプを保持していないため空
+            ocr_segments=ocr_segments,
+        )
+
+        asset_json = AssetJsonV0(
+            asset_meta=asset_meta_v0,
+            media_info=media_info_v0,
+            asset_structure=asset_structure_v0,
+            asset_annotations=AssetAnnotationsV0(),
+        )
+
+        evaluation_meta_v0 = EvaluationMetaV0(
+            evaluated_at=datetime.now(),
+            evaluator_model=spec.metadata.ai_model_version,
+            # processing_time_ms は AnalysisOrchestrator.run() 完了後、
+            # _metadata.processing_time_ms と同じタイミングで上書きされる。
+            processing_time_ms=spec.metadata.processing_time_ms,
+            validation_status=spec.metadata.validation_status,
+            validation_notes=spec.metadata.validation_notes,
+            analysis_tools_used=spec.metadata.analysis_tools_used,
+        )
+
+        evaluation_json = EvaluationJsonV0(
+            evaluation_meta=evaluation_meta_v0,
+            diagnostics=spec.diagnostics,
+            performance=spec.performance,
+            landing_page_analysis=spec.landing_page,
+        )
+
+        return json.loads(asset_json.json()), json.loads(evaluation_json.json())
+
+    @staticmethod
+    def _parse_dimensions(metadata_result: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+        """
+        metadata_result から width/height を honest に取り出す。
+
+        画像は width_pixels/height_pixels、動画は "1920x1080" 形式の
+        resolution 文字列で来るため、フォーマットを揃える。どちらも
+        取れない、または型が想定と違う場合も例外を投げず、捏造せず
+        (None, None) を返す（呼び出し元がメタデータをどう組み立てて来ても、
+        このヘルパー自体は落ちない契約にする）。
+        """
+        width = metadata_result.get("width_pixels")
+        height = metadata_result.get("height_pixels")
+        if isinstance(width, int) and isinstance(height, int):
+            return width, height
+
+        resolution = metadata_result.get("resolution")
+        if isinstance(resolution, str) and "x" in resolution:
+            try:
+                width_str, height_str = resolution.split("x", 1)
+                return int(width_str), int(height_str)
+            except ValueError:
+                pass
+
+        return None, None
     
     def _populate_input_metadata(self, mode: str, ingestion_result: Dict[str, Any]) -> Dict[str, Any]:
         """Populate input_metadata section"""

@@ -199,13 +199,14 @@ async def analyze(
             else:
                 spec_data_jsonable = json.loads(spec.json())
             
-            # DB に保存
+            # DB に保存（spec_data のみ。asset_data/evaluation_dataのdual-writeは
+            # まだ実施しない＝DB保存挙動はP1のスコープ外で変更していない）
             db_record = repo.create(
                 asset_id=asset_id,
                 format=spec.creative_core.format,
                 spec_data=spec_data_jsonable
             )
-            
+
             logger.info(
                 "Analysis completed successfully",
                 extra={
@@ -221,12 +222,28 @@ async def analyze(
             if decision_support_diff:
                 spec_data_jsonable.setdefault("diagnostics", {})["decision_support_diff"] = decision_support_diff
 
+            # asset_data/evaluation_data (v0) はDBには保存しないが、生成ロジック
+            # (ConverterService._build_asset_evaluation_v0) の結果をAPIレスポンスには
+            # 含める。AdInsightSpec は未知フィールドを無視するため、spec_data_jsonable
+            # 側（spec経由）には含まれない。元の spec_dict から直接取り出す。
+            # decision_support_diff の注入より後で取り出すのは、レスポンス内の
+            # evaluation_data.diagnostics と 直下の diagnostics（legacy）とで
+            # decision_support_diff の有無が食い違わないようにするため
+            # （PR #73 レビュー指摘: evaluation_data.diagnostics だけ古い内容の
+            # まま返っていた）。
+            asset_data = spec_dict.get("asset_data")
+            evaluation_data = spec_dict.get("evaluation_data")
+            if evaluation_data and decision_support_diff:
+                evaluation_data.setdefault("diagnostics", {})["decision_support_diff"] = decision_support_diff
+
             # UI 側で「この場で作成した版」を selected_version として保持できるよう、
             # DB 確定後の version をレスポンスに追加する（スキーマ本体には存在しない値なので追加のみ・破壊的変更ではない）
             return {
                 **spec_data_jsonable,
                 "version": db_record.version,
                 "created_at": db_record.created_at.isoformat(),
+                "asset_data": asset_data,
+                "evaluation_data": evaluation_data,
             }
         
         finally:

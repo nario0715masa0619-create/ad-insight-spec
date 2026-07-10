@@ -102,8 +102,26 @@ def analyze(
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # spec (= orchestrator.run()の戻り値) は ConverterService が
+        # spec.dict()（.json()ではない）で組み立てているため、input_timestamp等の
+        # datetimeフィールドは生のdatetimeオブジェクトのまま残る（既知の
+        # .dict() vs .json() 落とし穴、P1で新設したasset_data/evaluation_data
+        # 自体はjson.loads(model.json())経由でJSON-safe化済み）。
+        #
+        # default=str の設計意図（意図的なトレードオフ、PR #73レビュー指摘）:
+        # ここでのdefault=strは上記の既知datetime問題に対する保険として入れたが、
+        # 実装上はdatetime以外の「JSON化できない値」全般（万一の実装ミスで
+        # 混入した例外オブジェクトや未対応の型など）も無条件にstr()化して
+        # 書き出してしまう。つまり「想定済みの既知バグを黙って直す」と
+        # 「未知のバグを黙って隠す」を区別できない。CLIはこのファイルの
+        # 出力を人が目視確認する運用（自動検証なし）である前提のもと、
+        # 「JSON化自体が失敗してCLIが丸ごとエラー終了する」より
+        # 「多少おかしい文字列が1フィールドに混じっても出力は完了する」方を
+        # 優先する意図的な選択として許容している。将来、より粒度の細かい
+        # 検証（例: 既知のdatetimeフィールドだけをjson.loads(spec.json())相当で
+        # 事前に正規化し、default=str自体を不要にする）に置き換える余地はある。
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(spec, f, indent=2, ensure_ascii=False)
+            json.dump(spec, f, indent=2, ensure_ascii=False, default=str)
         
         click.echo()
         click.echo("=" * 80)
