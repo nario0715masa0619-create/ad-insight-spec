@@ -464,6 +464,19 @@ async def delete_spec(
         )
         
         repo = AdInsightRepository(db)
+        
+        # ガードレール：一括削除による事故を防ぐため、2件以上の履歴がある場合は削除を拒否する
+        existing_versions = repo.get_all_versions_by_asset_id(asset_id)
+        if len(existing_versions) > 1:
+            logger.warning(
+                f"Blocked bulk deletion for {asset_id} ({len(existing_versions)} versions)",
+                extra={"asset_id": asset_id, "versions_count": len(existing_versions)}
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="履歴が複数あるため、asset_id 単位の一括削除は禁止されています。個別削除に切り替えてください。"
+            )
+        
         deleted_count = repo.delete_logical_by_asset_id(asset_id)
         
         if deleted_count == 0:
