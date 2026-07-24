@@ -519,6 +519,7 @@ Phase 2設計doc冒頭（本ドキュメントの「1つの入口関数として
 - `backend/tests/test_asset_v0_schema.py` — 上記の単体テスト
 - `backend/alembic/` — Phase 1実装済みのマイグレーション一式
 - `docs/DEPLOYMENT.md`（「1a. DBマイグレーション」） — Alembicの運用手順
+- `docs/plans/asset_evaluation_split_phase3_dual_write.md` — **次フェーズ**: Phase 3（dual-write）の設計ドキュメント（2026-07-09作成、Planning）
 
 最終更新: 2026-07-09
-ステータス: 🟢🟢 **Phase 2（read adapter）実装完了**（PR #61, #65, #68, #69, #70, #71）。Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施。`resolve_spec_data`は8ブロック全てのdowncast＋`spec_data`パススルー＋fail-softの3分岐が完全実装済み。現行の全既存レコードへの挙動影響はゼロ（dual-write未実装のため）。残タスク: 本番DBマイグレーション適用（別途明示指示待ち）、Phase 3（dual-write実装）、`_metadata.json_schema_version`の正式なバージョニング戦略の確定
+ステータス: 🟢🟢 **Phase 2（read adapter）実装完了**（PR #61, #65, #68, #69, #70, #71）。Phase 1（カラム＋v0スキーマ）実装・ローカル検証済み、本番適用は未実施。`resolve_spec_data`は8ブロック全てのdowncast＋`spec_data`パススルー＋fail-softの3分岐が完全実装済み。現行の全既存レコードへの挙動影響はゼロ（dual-write未実装のため）。残タスク: 本番DBマイグレーション適用（別途明示指示待ち）、**Phase 3（dual-write実装、設計ドキュメント作成済み→`asset_evaluation_split_phase3_dual_write.md`参照）**、`_metadata.json_schema_version`の正式なバージョニング戦略の確定
