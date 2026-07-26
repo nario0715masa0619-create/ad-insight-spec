@@ -105,6 +105,10 @@ python ../scripts/e2e_test_phase2c2.py
 1. **インフラストラクチャ**: リバースプロキシでの SSL/TLS 通信の適用、不要なポートのファイアウォール遮断。
 2. **ツール・依存関係**: Tesseract, FFmpeg をシステムパッケージとして本番サーバーにインストール。
 3. **データベース**: 本番稼働時は SQLite ではなく **PostgreSQL** への移行と定期バックアップ戦略の導入を推奨。
+   `DATABASE_URL` 環境変数（`.env`）で接続先を切り替える（2026-07時点で `app/db/session.py` が
+   `app/config.py` の `DATABASE_URL` を正しく参照するようになり、未設定時のみ
+   `sqlite:///./ad_insight.db` にフォールバックする）。実際に Postgres へ切り替える際は、
+   `docs/POSTGRES_MIGRATION.md` の手順に沿って適用前に `alembic upgrade head` のスモークテストを行うこと。
 4. **API キー・シークレット管理**: `.env` での直接管理は避け、AWS Secrets Manager 等の機密情報管理サービスを推奨。
 5. **アプリケーション設定**: デバッグモード無効化 (`DEBUG=False`)、ログレベルの適切な設定 (`LOG_LEVEL=INFO`)。
 6. **ロギング・監視**: アプリケーションログの CloudWatch または ELK スタックへの転送とモニタリング。
