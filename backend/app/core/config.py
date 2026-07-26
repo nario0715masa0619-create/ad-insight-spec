@@ -1,5 +1,13 @@
 """
 Application configuration module.
+
+NOTE (2026-07-26): This module is currently unused — no code in this
+repository imports `app.core.config`. The canonical settings module is
+`app.config` (`Settings` / `get_settings()`), which is what
+`app/db/session.py`, `app/main.py`, and the rest of the app actually use.
+This file is left as-is (not deleted) pending a decision on whether it
+should be removed or repurposed; see the db/session.py DATABASE_URL fix
+task for context.
 """
 import os
 from typing import Optional
