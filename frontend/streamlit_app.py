@@ -170,6 +170,38 @@ def init_session_state():
             st.session_state[key] = value
 
 
+# ===== 検証タブ =====
+# CampaignPilotの提案が Meta Ads Manager だけでは出にくい新規の原因特定・改善案を
+# 生み、実行と成果改善につながるかを記録するための検証機能。
+# API側は /api/v1/verification/* に完結しており、既存の /api/v1/specs/* とは独立。
+
+AWARENESS_RATING_LABELS = {
+    "already_knew": "既に気づいていた",
+    "realized_when_told": "言われて初めて気づいた",
+    "questionable_validity": "妥当性に疑問",
+    "cannot_judge": "判断不能",
+}
+ORIGINALITY_RATING_LABELS = {
+    "could_have_suggested_myself": "自分でも出していた",
+    "could_not_have_suggested_myself": "自分では先に出せなかった",
+    "generic": "一般論",
+    "hard_to_execute": "実行しにくい",
+    "unnecessary": "不要",
+}
+
+
+def init_verification_session_state():
+    defaults = {
+        "verif_view": "list",  # 検証タブ内での "list" | "new" | "detail"
+        "verif_selected_case_id": None,
+        "verif_list_items": [],
+        "verif_list_total": 0,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
 # ===== 新規分析タブの analysis_result: いつ更新/クリアするか =====
 # 通常のタブ切替や、他ウィジェット操作によるrerunでは analysis_result は
 # 一切触らない（st.session_state に保持し続けるだけ）。以下の3ケースのみ
@@ -1126,13 +1158,15 @@ st.title("📊 CampaignPilot")
 
 # API ベース URL（環境に応じて変更可）
 API_BASE_URL = "http://localhost:8000/api/v1/specs"
+VERIFICATION_API_BASE_URL = "http://localhost:8000/api/v1/verification"
 
 init_session_state()
+init_verification_session_state()
 restore_analysis_result_from_query_params()
 
-# 上位ナビゲーションは「新規分析」「保存済み結果」の2区分のみ。
+# 上位ナビゲーションは「新規分析」「保存済み結果」「検証」の3区分のみ。
 # 詳細表示への遷移は st.tabs() ではなく session_state（current_view 等）で管理する。
-tab_new, tab_saved = st.tabs(["📤 新規分析", "📂 保存済み結果"])
+tab_new, tab_saved, tab_verify = st.tabs(["📤 新規分析", "📂 保存済み結果", "🧪 検証"])
 
 # ============ 新規分析 ============
 with tab_new:
@@ -1426,6 +1460,290 @@ with tab_saved:
             # 一覧カードの版（最新版）をそのまま詳細画面に引き継ぎ、
             # 「一覧は最新版、詳細はv1」という表示不整合を防ぐ。
             st.session_state["selected_version"] = navigate_to_version
+            st.rerun()
+
+# ============ 検証 ============
+with tab_verify:
+    st.header("🧪 検証")
+    st.caption(
+        "CampaignPilotの提案がMeta Ads Managerだけでは出にくい新規の原因特定・改善案を"
+        "生み、実行と成果改善につながっているかを記録します。"
+    )
+
+    nav_cols = st.columns([1, 1, 2])
+    with nav_cols[0]:
+        if st.button("📋 一覧へ", key=widget_key("verify", "nav_list")):
+            st.session_state["verif_view"] = "list"
+            st.session_state["verif_selected_case_id"] = None
+            st.rerun()
+    with nav_cols[1]:
+        if st.button("➕ 新規登録", key=widget_key("verify", "nav_new")):
+            st.session_state["verif_view"] = "new"
+            st.rerun()
+    with nav_cols[2]:
+        st.link_button("📥 CSV出力（全件ダウンロード）", f"{VERIFICATION_API_BASE_URL}/export.csv")
+
+    st.divider()
+
+    # ---------- 新規登録 ----------
+    if st.session_state["verif_view"] == "new":
+        st.subheader("案件の新規登録・事前ヒアリング内容の保存")
+        with st.form(key=widget_key("verify_new", "form")):
+            case_name = st.text_input("案件名/クライアント名 *", key=widget_key("verify_new", "case_name"))
+            asset_id_input = st.text_input(
+                "関連する分析結果の asset_id（任意）",
+                key=widget_key("verify_new", "asset_id"),
+                help="「保存済み結果」タブに表示される 🆔 の値を入力すると紐付けられます。",
+            )
+            asset_version_input = st.number_input(
+                "上記 asset_id で提示したバージョン（asset_id指定時は必須）",
+                min_value=0,
+                value=0,
+                step=1,
+                key=widget_key("verify_new", "asset_version"),
+                help="「保存済み結果」タブの詳細画面に表示される Version の値を入力してください。"
+                "asset_idを再分析で上書きさせないよう、提示した時点の版を固定します。",
+            )
+            industry = st.text_input("業種（任意）", key=widget_key("verify_new", "industry"))
+            current_issue = st.text_area("現状の課題認識（任意）", key=widget_key("verify_new", "current_issue"))
+            meta_ads_experience = st.text_area(
+                "Meta広告運用歴・現状の運用状況（任意）", key=widget_key("verify_new", "meta_experience")
+            )
+            expectation = st.text_area("CampaignPilotに期待すること（任意）", key=widget_key("verify_new", "expectation"))
+            free_note = st.text_area("その他自由記述（任意）", key=widget_key("verify_new", "free_note"))
+
+            submitted = st.form_submit_button("登録")
+            if submitted:
+                asset_id_value = asset_id_input.strip() or None
+                asset_version_value = int(asset_version_input) if asset_version_input else None
+                if not case_name.strip():
+                    st.error("⚠️ 案件名は必須です。")
+                elif asset_id_value and not asset_version_value:
+                    st.error("⚠️ asset_id を指定する場合は、提示したバージョンも入力してください。")
+                elif asset_version_value and not asset_id_value:
+                    st.error("⚠️ バージョンを指定する場合は asset_id も入力してください。")
+                else:
+                    pre_hearing_notes = {
+                        "industry": industry,
+                        "current_issue": current_issue,
+                        "meta_ads_experience": meta_ads_experience,
+                        "expectation": expectation,
+                        "free_note": free_note,
+                    }
+                    try:
+                        response = requests.post(
+                            f"{VERIFICATION_API_BASE_URL}/cases",
+                            json={
+                                "case_name": case_name.strip(),
+                                "asset_id": asset_id_value,
+                                "asset_version": asset_version_value,
+                                "pre_hearing_notes": pre_hearing_notes,
+                            },
+                        )
+                        if response.status_code == 200:
+                            new_case = response.json()
+                            st.success(f"✅ 案件「{new_case['case_name']}」を登録しました。")
+                            st.session_state["verif_view"] = "detail"
+                            st.session_state["verif_selected_case_id"] = new_case["id"]
+                            st.rerun()
+                        else:
+                            st.error(f"❌ 登録に失敗しました（HTTP {response.status_code}）: {response.text}")
+                    except Exception as e:
+                        render_api_exception(e)
+
+    # ---------- 詳細 ----------
+    elif st.session_state["verif_view"] == "detail" and st.session_state.get("verif_selected_case_id"):
+        case_id = st.session_state["verif_selected_case_id"]
+        try:
+            response = requests.get(f"{VERIFICATION_API_BASE_URL}/cases/{case_id}")
+        except Exception as e:
+            response = None
+            render_api_exception(e)
+
+        if response is not None and response.status_code == 200:
+            case = response.json()
+            st.subheader(f"📌 {case['case_name']}")
+            if case.get("asset_id"):
+                st.caption(f"🆔 関連 asset_id: {case['asset_id']} (version {case.get('asset_version')})")
+            st.caption(f"🗓️ 登録日時: {case['created_at'][:19].replace('T', ' ')}")
+
+            with st.expander("📝 事前ヒアリング内容", expanded=True):
+                st.json(case.get("pre_hearing_notes") or {})
+
+            with st.expander("💬 CampaignPilot提示後の評価", expanded=True):
+                existing_eval = case.get("presentation_evaluation") or {}
+                with st.form(key=widget_key("verify_detail", "presentation_eval_form", case_id)):
+                    usefulness = st.selectbox(
+                        "全体的な有用度",
+                        ["", "very_useful", "useful", "neutral", "not_useful"],
+                        index=(
+                            ["", "very_useful", "useful", "neutral", "not_useful"].index(existing_eval.get("usefulness", ""))
+                            if existing_eval.get("usefulness", "") in ["", "very_useful", "useful", "neutral", "not_useful"]
+                            else 0
+                        ),
+                        format_func=lambda v: {
+                            "": "（未選択）",
+                            "very_useful": "非常に有用だった",
+                            "useful": "有用だった",
+                            "neutral": "どちらとも言えない",
+                            "not_useful": "有用ではなかった",
+                        }[v],
+                        key=widget_key("verify_detail", "usefulness", case_id),
+                    )
+                    comment = st.text_area(
+                        "コメント（任意）",
+                        value=existing_eval.get("comment", ""),
+                        key=widget_key("verify_detail", "presentation_comment", case_id),
+                    )
+                    if st.form_submit_button("評価を保存"):
+                        try:
+                            patch_response = requests.patch(
+                                f"{VERIFICATION_API_BASE_URL}/cases/{case_id}/presentation-evaluation",
+                                json={"presentation_evaluation": {"usefulness": usefulness or None, "comment": comment}},
+                            )
+                            if patch_response.status_code == 200:
+                                st.success("✅ 評価を保存しました。")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ 保存に失敗しました（HTTP {patch_response.status_code}）")
+                        except Exception as e:
+                            render_api_exception(e)
+
+            st.divider()
+            st.markdown("### 提案ごとの評価")
+            with st.form(key=widget_key("verify_detail", "add_suggestion_form", case_id)):
+                suggestion_key = st.text_input("提案タイトル *", key=widget_key("verify_detail", "suggestion_key", case_id))
+                suggestion_text = st.text_area("提案内容（任意・コピー貼り付け）", key=widget_key("verify_detail", "suggestion_text", case_id))
+                awareness_rating = st.selectbox(
+                    "気づき度",
+                    list(AWARENESS_RATING_LABELS.keys()),
+                    format_func=lambda k: AWARENESS_RATING_LABELS[k],
+                    key=widget_key("verify_detail", "awareness_rating", case_id),
+                )
+                originality_rating = st.selectbox(
+                    "独自性",
+                    list(ORIGINALITY_RATING_LABELS.keys()),
+                    format_func=lambda k: ORIGINALITY_RATING_LABELS[k],
+                    key=widget_key("verify_detail", "originality_rating", case_id),
+                )
+                if st.form_submit_button("提案評価を追加"):
+                    if not suggestion_key.strip():
+                        st.error("⚠️ 提案タイトルは必須です。")
+                    else:
+                        try:
+                            add_response = requests.post(
+                                f"{VERIFICATION_API_BASE_URL}/cases/{case_id}/suggestions",
+                                json={
+                                    "suggestion_key": suggestion_key.strip(),
+                                    "suggestion_text": suggestion_text or None,
+                                    "awareness_rating": awareness_rating,
+                                    "originality_rating": originality_rating,
+                                },
+                            )
+                            if add_response.status_code == 200:
+                                st.success("✅ 提案評価を追加しました。")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ 追加に失敗しました（HTTP {add_response.status_code}）")
+                        except Exception as e:
+                            render_api_exception(e)
+
+            suggestions = case.get("suggestion_evaluations", [])
+            if not suggestions:
+                st.info("まだ提案評価が登録されていません。")
+            for s_idx, suggestion in enumerate(suggestions):
+                with st.container(border=True):
+                    st.write(f"**{suggestion['suggestion_key']}**")
+                    if suggestion.get("suggestion_text"):
+                        st.caption(suggestion["suggestion_text"])
+                    st.write(
+                        f"気づき度: **{AWARENESS_RATING_LABELS.get(suggestion['awareness_rating'], suggestion['awareness_rating'])}** ／ "
+                        f"独自性: **{ORIGINALITY_RATING_LABELS.get(suggestion['originality_rating'], suggestion['originality_rating'])}**"
+                    )
+
+                    followups_by_checkpoint = {f["checkpoint"]: f for f in suggestion.get("followups", [])}
+                    fu_cols = st.columns(2)
+                    for cp, cp_label, col in [("week_2", "2週間後", fu_cols[0]), ("week_4", "4週間後", fu_cols[1])]:
+                        with col:
+                            existing_fu = followups_by_checkpoint.get(cp, {})
+                            with st.form(key=widget_key("verify_detail", f"followup_form_{cp}", suggestion["id"], s_idx)):
+                                st.markdown(f"**{cp_label}のフォローアップ**")
+                                executed = st.checkbox(
+                                    "実行した",
+                                    value=bool(existing_fu.get("executed")),
+                                    key=widget_key("verify_detail", f"followup_executed_{cp}", suggestion["id"], s_idx),
+                                )
+                                result_change = st.text_area(
+                                    "成果変化（任意）",
+                                    value=existing_fu.get("result_change") or "",
+                                    key=widget_key("verify_detail", f"followup_result_{cp}", suggestion["id"], s_idx),
+                                )
+                                if st.form_submit_button("保存"):
+                                    try:
+                                        fu_response = requests.put(
+                                            f"{VERIFICATION_API_BASE_URL}/suggestions/{suggestion['id']}/followups/{cp}",
+                                            json={"executed": executed, "result_change": result_change or None},
+                                        )
+                                        if fu_response.status_code == 200:
+                                            st.success("✅ 保存しました。")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ 保存に失敗しました（HTTP {fu_response.status_code}）")
+                                    except Exception as e:
+                                        render_api_exception(e)
+        elif response is not None and response.status_code == 404:
+            st.error("❌ 案件が見つかりません。削除された可能性があります。")
+        elif response is not None:
+            st.error(f"❌ 詳細取得に失敗しました（HTTP {response.status_code}）")
+
+    # ---------- 一覧 ----------
+    else:
+        st.subheader("案件一覧")
+        list_cols = st.columns(2)
+        with list_cols[0]:
+            verif_skip = st.number_input("Skip", min_value=0, value=0, step=10, key=widget_key("verify_list", "skip"))
+        with list_cols[1]:
+            verif_limit = st.number_input("Limit", min_value=1, value=10, step=5, key=widget_key("verify_list", "limit"))
+
+        if st.button("🔄 一覧を取得", key=widget_key("verify_list", "fetch")):
+            try:
+                response = requests.get(
+                    f"{VERIFICATION_API_BASE_URL}/cases", params={"skip": verif_skip, "limit": verif_limit}
+                )
+                if response.status_code == 200:
+                    body = response.json()
+                    st.session_state["verif_list_items"] = body.get("items", [])
+                    st.session_state["verif_list_total"] = body.get("total", 0)
+                else:
+                    st.error(f"❌ 一覧取得に失敗しました（HTTP {response.status_code}）")
+            except Exception as e:
+                render_api_exception(e)
+
+        items = st.session_state.get("verif_list_items", [])
+        st.caption(f"全 {st.session_state.get('verif_list_total', 0)} 件")
+
+        if not items:
+            st.info("案件がまだ登録されていません（または「一覧を取得」を押してください）。")
+
+        navigate_to_case_id = None
+        for idx, item in enumerate(items):
+            with st.container(border=True):
+                cols = st.columns([3, 2, 2, 1])
+                with cols[0]:
+                    st.write(f"**📌 {item['case_name']}**")
+                    if item.get("asset_id"):
+                        st.caption(f"🆔 {item['asset_id']} (v{item.get('asset_version')})")
+                with cols[1]:
+                    st.caption(f"🗓️ {item['created_at'][:19].replace('T', ' ')}")
+                with cols[2]:
+                    st.caption(f"提案評価: {item.get('suggestion_count', 0)} 件")
+                with cols[3]:
+                    if st.button("詳細", key=widget_key("verify_list", "select_detail", item["id"], idx)):
+                        navigate_to_case_id = item["id"]
+
+        if navigate_to_case_id is not None:
+            st.session_state["verif_view"] = "detail"
+            st.session_state["verif_selected_case_id"] = navigate_to_case_id
             st.rerun()
 
 # ============ フッター ============
