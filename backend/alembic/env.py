@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.db.base import Base  # noqa: E402
 from app.db.session import SQLALCHEMY_DATABASE_URL  # noqa: E402
 import app.models.ad_insight  # noqa: E402,F401 target_metadataへの登録のためimport
+import app.models.verification  # noqa: E402,F401 target_metadataへの登録のためimport
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
