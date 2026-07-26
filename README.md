@@ -1,7 +1,18 @@
-# CampaignPilot（旧: Ad-Insight-Spec）
+﻿# CampaignPilot（旧: Ad-Insight-Spec）
 
 CampaignPilot（旧: Ad-Insight-Spec）は、広告クリエイティブ（画像・動画）とランディングページ（LP）から抽出した情報を元に、LLM を用いて広告の定性・定量分析を行い、統合された JSON 仕様 (AdInsightSpec v0.2) に変換して管理するシステムです。
 
+## 営業・提案関連資料
+
+提案時の説明、初回商談、社内共有で使える営業関連資料を docs/ 配下に整理しています。
+開発者向けのセットアップ情報を見る前に、まずプロダクトの価値や伝え方を確認したい場合は、以下の資料から参照するのが自然です。
+
+- [CampaignPilot 説明資料](docs/campaignpilot_sales_doc.md)
+  - 何を解決する仕組みなのか、導入価値と技術的な裏付けをまとめた資料
+- [CampaignPilot トークスクリプト](docs/campaignpilot_talk_script.md)
+  - 顧客に対して価値をどう伝えるかを整理した営業用の話し方集
+- [CampaignPilot 営業トーク実戦版](docs/campaignpilot_sales_talk_advanced.md)
+  - 初回商談用の5分台本、深掘りトーク、クロージング文句まで含めた実戦向け資料
 ## クイックスタート
 
 ### 1. インストール
