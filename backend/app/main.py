@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 
@@ -73,12 +74,20 @@ async def add_request_id(request: Request, call_next):
 # ===== 例外ハンドラ: Pydantic バリデーションエラー =====
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Pydantic バリデーションエラー処理"""
+    """
+    Pydantic バリデーションエラー処理
+
+    exc.errors() は、model_validator 等が ValueError を raise した場合に
+    ctx.error として生の例外インスタンスを含むことがあり、そのまま
+    JSONResponse に渡すと json.dumps でシリアライズに失敗し 500 になってしまう
+    （Postgresスモークテストで実際に踏んだ不具合）。jsonable_encoder を通して
+    JSON化可能な形に変換してから details に入れる。
+    """
     error_response, status_code = create_error_response(
         error_message="Request validation failed",
         error_code="VALIDATION_ERROR",
         status_code=422,
-        details={"errors": exc.errors()}
+        details={"errors": jsonable_encoder(exc.errors())}
     )
     return JSONResponse(status_code=status_code, content=error_response)
 
