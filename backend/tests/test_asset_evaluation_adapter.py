@@ -1,4 +1,6 @@
+import json
 import logging
+from datetime import datetime
 
 from app.services.asset_evaluation_adapter import (
     resolve_spec_data,
@@ -11,6 +13,16 @@ from app.services.asset_evaluation_adapter import (
     _downcast_views,
     _downcast_metadata,
 )
+from app.schemas.ad_insight import AdInsightSpec, SourceTypeEnum, InputModeEnum, FormatEnum
+from app.schemas.asset_v0 import (
+    AssetJsonV0,
+    AssetMetaV0,
+    MediaInfoV0,
+    AssetStructureV0,
+    AssetAnnotationsV0,
+    CutSpan,
+)
+from app.schemas.evaluation_v0 import EvaluationJsonV0, EvaluationMetaV0
 
 
 SAMPLE_SPEC_DATA = {
@@ -42,60 +54,105 @@ class TestResolveSpecDataPassthrough:
         assert result == SAMPLE_SPEC_DATA
 
 
-class TestResolveSpecDataForwardCompatibility:
-    """asset_data/evaluation_data は現行DBに存在しないカラムのためのフォワード互換パラメータ。
-    渡された場合でも例外を送出せず、spec_dataへfail-softにフォールバックすること。"""
+class TestResolveSpecDataInconsistentFallback:
+    """asset_data/evaluation_dataのどちらか片方だけが非None（不整合データ）の場合は、
+    Phase 2 downcastバッチ5・配線バッチ後も引き続きspec_dataへfail-softに
+    フォールバックすること（この挙動はバッチ5でも変更していない）。"""
 
-    def test_non_none_asset_data_falls_back_to_spec_data(self, caplog):
+    def test_only_asset_data_falls_back_to_spec_data(self, caplog):
         with caplog.at_level(logging.WARNING):
             result = resolve_spec_data(
                 SAMPLE_SPEC_DATA,
                 asset_data={"asset_meta": {"asset_id": "asset_meta_test_0001"}},
             )
         assert result == SAMPLE_SPEC_DATA
-        assert any("not implemented" in record.message for record in caplog.records)
+        assert any("inconsistent state" in record.message for record in caplog.records)
 
-    def test_non_none_evaluation_data_falls_back_to_spec_data(self, caplog):
+    def test_only_evaluation_data_falls_back_to_spec_data(self, caplog):
         with caplog.at_level(logging.WARNING):
             result = resolve_spec_data(
                 SAMPLE_SPEC_DATA,
                 evaluation_data={"diagnostics": {}},
             )
         assert result == SAMPLE_SPEC_DATA
-        assert any("not implemented" in record.message for record in caplog.records)
+        assert any("inconsistent state" in record.message for record in caplog.records)
 
-    def test_both_non_none_falls_back_to_spec_data_without_raising(self, caplog):
+    def test_both_none_style_no_warning_logged(self, caplog):
+        """比較用: 両方Noneの場合は警告ログが出ないこと"""
+        with caplog.at_level(logging.WARNING):
+            resolve_spec_data(SAMPLE_SPEC_DATA)
+        assert len(caplog.records) == 0
+
+
+class TestResolveSpecDataFullDowncastWiring:
+    """Phase 2 downcastバッチ5・配線バッチ: asset_data/evaluation_dataが両方非Noneの場合、
+    resolve_spec_dataは_downcast_to_spec_data()経由で実際にdowncastした結果を返す
+    （もはやspec_dataへのfail-softフォールバックではない）ことを固定する。"""
+
+    def _make_asset_data(self, **overrides):
+        data = {
+            "asset_meta": {
+                "asset_id": "asset_meta_test_9999",
+                "platform": "meta",
+                "source_type": "local_file",
+                "created_at": "2026-07-09T12:00:00",
+                "mode": "file_only",
+            },
+            "media_info": {"media_type": "video_static", "duration_seconds": 15.9},
+            "asset_structure": {"cuts": [], "ocr_extracted_text": ""},
+            "asset_annotations": {},
+        }
+        data.update(overrides)
+        return data
+
+    def _make_evaluation_data(self, **overrides):
+        data = {
+            "evaluation_meta": {
+                "evaluated_at": "2026-07-09T12:30:00",
+                "evaluator_model": "gpt-4o",
+            },
+            "diagnostics": {
+                "qualitative": {
+                    "creative_fatigue_risk": "low",
+                    "creative_fatigue_basis": "新データ側の根拠テキストです",
+                }
+            },
+        }
+        data.update(overrides)
+        return data
+
+    def test_result_is_no_longer_spec_data_fallback(self):
+        """バッチ4以前は両方非Noneでもspec_dataへフォールバックしていたが、
+        バッチ5配線後は実際にdowncastした新しいdictが返ること"""
+        result = resolve_spec_data(
+            SAMPLE_SPEC_DATA,
+            asset_data=self._make_asset_data(),
+            evaluation_data=self._make_evaluation_data(),
+        )
+        assert result != SAMPLE_SPEC_DATA
+        assert result["asset_meta"]["asset_id"] == "asset_meta_test_9999"
+        assert result["diagnostics"]["qualitative"]["creative_fatigue_basis"] == "新データ側の根拠テキストです"
+
+    def test_no_warning_logged_on_successful_downcast(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            resolve_spec_data(
+                SAMPLE_SPEC_DATA,
+                asset_data=self._make_asset_data(),
+                evaluation_data=self._make_evaluation_data(),
+            )
+        assert len(caplog.records) == 0
+
+    def test_unexpected_exception_falls_back_to_spec_data(self, caplog):
+        """想定外の型（dictでない値）が渡された場合でも例外を送出せず、
+        spec_dataへfail-softにフォールバックすること"""
         with caplog.at_level(logging.WARNING):
             result = resolve_spec_data(
                 SAMPLE_SPEC_DATA,
-                asset_data={"asset_meta": {}},
-                evaluation_data={"diagnostics": {}},
+                asset_data="not-a-dict",  # type: ignore[arg-type]
+                evaluation_data=self._make_evaluation_data(),
             )
         assert result == SAMPLE_SPEC_DATA
-
-
-class TestDowncastAssetMetaNotWired:
-    """_downcast_asset_meta はPhase 2 downcast第一バッチの部品だが、resolve_spec_data
-    からはまだ呼ばれない（input_metadata/creative_coreの変換元が無いため、resolve_spec_data
-    は引き続き既存のfail-soft挙動のまま）ことを固定する。"""
-
-    def test_resolve_spec_data_does_not_call_downcast_asset_meta(self, caplog):
-        """asset_dataにasset_metaを含めて渡しても、resolve_spec_dataの戻り値は
-        依然としてspec_dataへのfail-softフォールバックのままであること
-        （_downcast_asset_metaの出力に置き換わっていないこと）を確認する。"""
-        with caplog.at_level(logging.WARNING):
-            result = resolve_spec_data(
-                SAMPLE_SPEC_DATA,
-                asset_data={
-                    "asset_meta": {
-                        "asset_id": "asset_meta_test_9999",
-                        "platform": "meta",
-                        "source_type": "local_file",
-                    }
-                },
-            )
-        assert result == SAMPLE_SPEC_DATA
-        assert result["asset_meta"]["asset_id"] == "asset_meta_test_0001"
+        assert any("unexpected exception" in record.message for record in caplog.records)
 
 
 class TestDowncastAssetMeta:
@@ -495,3 +552,102 @@ class TestDowncastMetadata:
         assert result["data_source"] is None
         assert result["input_mode"] is None
         assert result["ai_model_version"] is None
+
+
+class TestResolveSpecDataFullDowncastIntegration:
+    """Phase 2 downcastバッチ5・配線バッチ: 実際のPydantic v0モデル（AssetJsonV0/
+    EvaluationJsonV0）から構築したデータを渡し、resolve_spec_dataがend-to-endで
+    正しいlegacy spec_data互換dictを返すことを検証する。"""
+
+    def _build_asset_evaluation_data(self):
+        asset = AssetJsonV0(
+            asset_meta=AssetMetaV0(
+                asset_id="asset_meta_test_full_0001",
+                asset_name="統合テスト素材",
+                platform="meta",
+                campaign_name="統合テストキャンペーン",
+                source_type=SourceTypeEnum.LOCAL_FILE,
+                created_at=datetime(2026, 7, 9, 12, 0, 0),
+                mode=InputModeEnum.FILE_ONLY,
+            ),
+            media_info=MediaInfoV0(media_type=FormatEnum.VIDEO_STATIC, duration_seconds=15.9),
+            asset_structure=AssetStructureV0(
+                cuts=[CutSpan(cut_id="cut_1", start_sec=0.0, end_sec=8.1)],
+                ocr_extracted_text="今だけ限定セール",
+            ),
+            asset_annotations=AssetAnnotationsV0(),
+        )
+        evaluation = EvaluationJsonV0(
+            evaluation_meta=EvaluationMetaV0(
+                evaluated_at=datetime(2026, 7, 9, 12, 30, 0),
+                evaluator_model="gpt-4o",
+            ),
+            diagnostics={
+                "qualitative": {
+                    "creative_fatigue_risk": "low",
+                    "creative_fatigue_basis": "統合テスト用の根拠テキストです",
+                },
+                "video_cuts": {
+                    "schema_version": "1.0",
+                    "generation_status": {"status": "success", "error_code": None},
+                    "video_summary": {"total_duration_seconds": 8.1, "cut_count": 1},
+                    "video_cuts": [
+                        {
+                            "cut_id": "cut_1",
+                            "start_seconds": None,
+                            "end_seconds": None,
+                            "role_tag": "hook",
+                            "summary": "画面内容の要約テキスト",
+                            "improvement_suggestion": "具体的な改善提案テキスト",
+                        }
+                    ],
+                },
+            },
+        )
+        # 既知の落とし穴（datetime JSON化）を踏まないよう、.dict()ではなく
+        # json.loads(model.json())を経由する（asset_v0.py/evaluation_v0.pyの
+        # モジュールdocstring参照）。
+        asset_data = json.loads(asset.json())
+        evaluation_data = json.loads(evaluation.json())
+        return asset_data, evaluation_data
+
+    def test_full_downcast_produces_all_top_level_keys(self):
+        asset_data, evaluation_data = self._build_asset_evaluation_data()
+        result = resolve_spec_data({}, asset_data, evaluation_data)
+        assert set(result.keys()) == {
+            "input_metadata", "asset_meta", "creative_core", "landing_page",
+            "performance", "diagnostics", "views", "_metadata",
+        }
+
+    def test_full_downcast_video_cuts_cut_id_merge_end_to_end(self):
+        """asset_data.asset_structure.cuts のCutSpanが、evaluation_data.diagnostics
+        側のvideo_cuts（start/end未設定）に正しくcut_idで補完されること"""
+        asset_data, evaluation_data = self._build_asset_evaluation_data()
+        result = resolve_spec_data({}, asset_data, evaluation_data)
+        merged_cut = result["diagnostics"]["video_cuts"]["video_cuts"][0]
+        assert merged_cut["start_seconds"] == 0.0
+        assert merged_cut["end_seconds"] == 8.1
+
+    def test_full_downcast_output_validates_against_legacy_ad_insight_spec(self):
+        """downcast結果が、そのままlegacy AdInsightSpecのPydanticバリデーションを
+        通ることを確認する（mode=file_onlyのため、landing_page/performanceは
+        Noneである必要がある）。"""
+        asset_data, evaluation_data = self._build_asset_evaluation_data()
+        result = resolve_spec_data({}, asset_data, evaluation_data)
+        # file_only モードでは landing_page/performance は None である必要がある
+        # （AdInsightSpec.validate_mode_requirements）
+        assert result["landing_page"] is None
+        assert result["performance"] is None
+        spec = AdInsightSpec(**result)
+        assert spec.asset_meta.asset_id == "asset_meta_test_full_0001"
+        assert spec.input_metadata.mode == InputModeEnum.FILE_ONLY
+
+    def test_asset_data_missing_asset_meta_block_does_not_crash(self):
+        """asset_dataの必須ブロック（asset_meta）が丸ごと欠けていても、
+        例外を送出せず、そのブロックのフィールドがNoneになるだけであること
+        （捏造しない、かつクラッシュもしない）"""
+        asset_data, evaluation_data = self._build_asset_evaluation_data()
+        del asset_data["asset_meta"]
+        result = resolve_spec_data({}, asset_data, evaluation_data)
+        assert result["asset_meta"] == {}
+        assert result["input_metadata"]["mode"] is None
