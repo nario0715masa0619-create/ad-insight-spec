@@ -120,6 +120,19 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 | is_deleted | BOOLEAN | 論理削除フラグ |
 | created_at | TIMESTAMP | 作成日時 |
 | updated_at | TIMESTAMP | 更新日時 |
+| company_id | INT (nullable, FK) | 招待制モニターベータ導入以降、作成した会社を記録（データ分離・月間利用上限カウントに使用。既存レコードはNULL） |
+| created_by_user_id | INT (nullable, FK) | 作成したモニターユーザー |
+
+#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions`）
+
+招待制モニターベータ公開のために追加したテーブル群です。詳細なカラム定義は
+`backend/app/models/beta_access.py`、運用手順は
+[MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) を参照してください。
+
+- `monitor_companies`: モニター企業（テナント）。`monthly_analysis_limit`（月間分析上限）を保持。
+- `monitor_users`: 招待されたユーザー。自由登録経路は存在せず、管理者/CLIのみが作成可能。
+- `monitor_sessions`: サーバー保持のログインセッション（署名付きトークンではなくDB行として管理し、
+  停止時に即時失効できるようにしている）。
 
 **複合キー戦略:**
 - Primary Key: `(asset_id, version)`
@@ -131,11 +144,18 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 ## 4. API / UI インターフェース（現行実装）
 
 ### FastAPI エンドポイント
-正式な API パスは以下の通り統一されています。
-- `POST /api/v1/specs/analyze`: 分析実行
-- `GET /api/v1/specs`: 分析結果一覧取得
-- `GET /api/v1/specs/{asset_id}`: 分析結果詳細取得
-- `DELETE /api/v1/specs/{asset_id}`: 分析結果の論理削除
+正式な API パスは以下の通り統一されています。招待制モニターベータ導入以降、
+`/api/v1/specs/*` と `/api/v1/verification/*` は全てログイン必須です
+（`Authorization: Bearer <session_token>` ヘッダー、`app/api/deps.py::get_current_user`）。
+- `POST /api/v1/specs/analyze`: 分析実行（ログイン中ユーザーの会社の月間上限チェックを通過した場合のみ実行）
+- `GET /api/v1/specs`: 分析結果一覧取得（ログイン中ユーザーの所属会社が所有するレコードのみ）
+- `GET /api/v1/specs/{asset_id}`: 分析結果詳細取得（他社所有のasset_idは404）
+- `DELETE /api/v1/specs/{asset_id}`: 分析結果の論理削除（他社所有のasset_idは404）
+- `POST /api/v1/auth/login` / `POST /api/v1/auth/logout` / `GET /api/v1/auth/me`: 招待制ログイン
+- `/api/v1/admin/*`: モニター企業・ユーザー管理（`is_admin=true` のユーザーのみ）
+
+詳細は本ドキュメントのデータベース設計セクション、および
+[MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md) を参照してください。
 
 ### Streamlit UI
 `frontend/streamlit_app.py` による UI は、「一覧/ダッシュボード」ではなく **「分析開始（アップロード）」を起動直後の第一画面** とし、以下の構成順序を推奨します。

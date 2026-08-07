@@ -9,12 +9,13 @@ import re
 from pathlib import Path
 
 from app.db.session import get_db
-from app.repositories import AdInsightRepository
-from app.models import AdInsight
+from app.repositories import AdInsightRepository, MonitorRepository
+from app.models import AdInsight, MonitorUser
 from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
 from app.services.asset_evaluation_adapter import resolve_spec_data
 from app.services.meta_ads_csv_service import MetaAdsCsvError
+from app.api.deps import get_current_user
 
 from app.utils.error_handler import create_error_response, ErrorResponse
 from app.utils.logging import request_id_var, trace_id_var, get_logger
@@ -113,7 +114,8 @@ async def analyze(
     kpi_file: Optional[UploadFile] = None,
     mode: str = Form("file_plus_lp_plus_manual_kpi"),
     asset_name: Optional[str] = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: MonitorUser = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
     ファイルをアップロードして分析を実行
@@ -124,14 +126,31 @@ async def analyze(
     - `kpi_file`: KPI ファイル（JSON） [オプション]
     - `mode`: 入力モード [デフォルト: file_plus_lp_plus_manual_kpi]
     - `asset_name`: 広告名/キャンペーン名 [オプション、未指定時はアップロードファイル名にフォールバック]
-    
+
     **出力**:
     - `ad_insight_spec v0.2` JSON オブジェクト
-    
+
     **エラー**:
     - 400: 入力ファイル形式エラー
+    - 401: 未ログイン/セッション無効
+    - 403: 当月の分析上限に到達
     - 500: 分析エラー
     """
+    monitor_repo = MonitorRepository(db)
+    company = monitor_repo.get_company_by_id(current_user.company_id)
+    usage = monitor_repo.get_usage_summary(company)
+    if usage["limit_reached"]:
+        error_response, status_code = create_error_response(
+            error_message=(
+                f"今月の分析上限（{usage['limit']}回）に達しました。上限は毎月1日にリセットされます。"
+                "追加の分析が必要な場合は管理者にお問い合わせください。"
+            ),
+            error_code="MONTHLY_LIMIT_EXCEEDED",
+            status_code=403,
+            details={"usage": usage},
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
+
     try:
         logger.info(
             "Analysis started",
@@ -205,7 +224,9 @@ async def analyze(
             db_record = repo.create(
                 asset_id=asset_id,
                 format=spec.creative_core.format,
-                spec_data=spec_data_jsonable
+                spec_data=spec_data_jsonable,
+                company_id=current_user.company_id,
+                created_by_user_id=current_user.id,
             )
 
             logger.info(
@@ -217,7 +238,9 @@ async def analyze(
             )
 
             # 前回バージョンとの decision_support 差分（新形式同士の場合のみ、fail-soft）
-            previous_record = repo.get_previous_version(asset_id, db_record.version)
+            previous_record = repo.get_previous_version(
+                asset_id, db_record.version, company_id_filter=current_user.company_id
+            )
             current_decision_support = (spec_data_jsonable.get("diagnostics", {}) or {}).get("decision_support")
             decision_support_diff = _build_decision_support_diff(current_decision_support, previous_record)
             if decision_support_diff:
@@ -310,10 +333,14 @@ async def list_specs(
     include_all_versions: bool = Query(
         False, description="true の場合、asset_id ごとの全バージョンを含めて返す（デフォルトは最新版のみ）"
     ),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: MonitorUser = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
     分析結果一覧取得（フィルタリング・ページング対応）
+
+    ログイン中ユーザーの所属会社が所有するレコードのみを返す（招待制モニター
+    ベータのデータ分離。他社のレコードは一覧にも件数にも一切含まれない）。
 
     デフォルトでは asset_id ごとの最新バージョンのみを返す（主フローの「保存済み結果」向け）。
     履歴が必要な場合は `include_all_versions=true` を指定する。
@@ -349,7 +376,8 @@ async def list_specs(
             skip=skip,
             limit=limit,
             format_filter=format,
-            asset_id_filter=asset_id
+            asset_id_filter=asset_id,
+            company_id_filter=current_user.company_id,
         )
 
         # UI 側が一覧カードの版・分析日時をそのまま使えるよう、
@@ -385,40 +413,43 @@ async def list_specs(
 async def get_spec(
     asset_id: str,
     version: Optional[int] = Query(None, description="バージョン指定（未指定で最新）"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: MonitorUser = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
     分析結果取得（asset_id 指定）
-    
+
     **パラメータ**:
     - `asset_id`: 素材 ID
     - `version`: バージョン指定（オプション、未指定で最新版）
-    
+
     **出力**:
     - `ad_insight_spec v0.2` JSON オブジェクト
-    
+
     **エラー**:
-    - 404: レコードなし
+    - 404: レコードなし（他社所有のレコードを指定した場合も、存在有無を
+      漏らさないため404を返す）
     """
     try:
         logger.info(
             f"Fetching spec: {asset_id}",
             extra={"asset_id": asset_id, "version": version, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
         )
-        
+
         repo = AdInsightRepository(db)
-        
+
         # バージョン指定がある場合
         if version is not None:
             record = db.query(AdInsight).filter(
                 AdInsight.asset_id == asset_id,
                 AdInsight.version == version,
-                AdInsight.is_deleted == False
+                AdInsight.is_deleted == False,
+                AdInsight.company_id == current_user.company_id,
             ).first()
         else:
             # バージョン指定がない場合は最新版
-            record = repo.get_latest_by_asset_id(asset_id)
-        
+            record = repo.get_latest_by_asset_id(asset_id, company_id_filter=current_user.company_id)
+
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
 
@@ -431,7 +462,9 @@ async def get_spec(
         # 前回バージョンとの decision_support 差分（新形式同士の場合のみ、fail-soft）。
         # record.spec_data はSQLAlchemyが追跡するライブオブジェクトなので、ネストした
         # diagnostics dict を直接 mutate せず、コピーしてから追加する。
-        previous_record = repo.get_previous_version(asset_id, record.version)
+        previous_record = repo.get_previous_version(
+            asset_id, record.version, company_id_filter=current_user.company_id
+        )
         diagnostics = resolved_spec_data.get("diagnostics", {}) or {}
         decision_support_diff = _build_decision_support_diff(diagnostics.get("decision_support"), previous_record)
         if decision_support_diff:
@@ -454,29 +487,32 @@ async def get_spec(
 @router.delete("/{asset_id}", response_model=Dict[str, str], tags=["Delete"])
 async def delete_spec(
     asset_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: MonitorUser = Depends(get_current_user)
 ) -> Dict[str, str]:
     """
     分析結果削除（論理削除）
-    
+
     **パラメータ**:
     - `asset_id`: 素材 ID
-    
+
     **出力**:
     - `{"message": "Deleted successfully"}`
-    
+
     **エラー**:
-    - 404: レコードなし
+    - 404: レコードなし（他社所有のレコードを指定した場合も404）
     """
     try:
         logger.info(
             f"Deleting spec: {asset_id}",
             extra={"asset_id": asset_id, "request_id": request_id_var.get(), "trace_id": trace_id_var.get()}
         )
-        
+
         repo = AdInsightRepository(db)
-        deleted_count = repo.delete_logical_by_asset_id(asset_id)
-        
+        deleted_count = repo.delete_logical_by_asset_id(
+            asset_id, company_id_filter=current_user.company_id
+        )
+
         if deleted_count == 0:
             raise HTTPException(status_code=404, detail="Record not found")
         

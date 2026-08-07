@@ -25,6 +25,8 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.models import VerificationCase, VerificationSuggestionEvaluation, VerificationFollowup  # noqa: F401
 from app.models.ad_insight import AdInsight  # noqa: F401
+from app.models import MonitorCompany, MonitorUser
+from app.api.deps import get_current_user
 from app.main import app
 
 engine = create_engine(
@@ -46,13 +48,36 @@ def db_session():
 
 @pytest.fixture
 def client(db_session):
+    # 招待制モニターベータ導入により /api/v1/specs・/api/v1/verification は
+    # ログイン必須になったため、テスト用の会社・ユーザーを1件用意して
+    # get_current_user を差し替える。
+    company = MonitorCompany(name="Test Co", slug="test-co", monthly_analysis_limit=100000, is_active=True)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+
+    user = MonitorUser(
+        company_id=company.id,
+        email="tester@example.com",
+        password_hash="unused-in-tests",
+        is_active=True,
+        is_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
     def _override_get_db():
         try:
             yield db_session
         finally:
             pass
 
+    def _override_get_current_user():
+        return user
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
     # lifespan（実engineへの Base.metadata.create_all）を起動させないよう、
     # `with TestClient(app) as client:` は使わない。
     yield TestClient(app)

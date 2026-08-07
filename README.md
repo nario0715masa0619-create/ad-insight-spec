@@ -2,6 +2,10 @@
 
 CampaignPilot（旧: Ad-Insight-Spec）は、広告クリエイティブ（画像・動画）とランディングページ（LP）から抽出した情報を元に、LLM を用いて広告の定性・定量分析を行い、統合された JSON 仕様 (AdInsightSpec v0.2) に変換して管理するシステムです。
 
+> 🧪 **現在、招待制のモニターベータとして提供しています。** 自由なアカウント登録はできません。
+> 利用方法は [docs/MONITOR_BETA_OPERATION.md](docs/MONITOR_BETA_OPERATION.md)、
+> モニター企業・ユーザーの管理方法は [docs/MONITOR_ACCOUNT_MANAGEMENT.md](docs/MONITOR_ACCOUNT_MANAGEMENT.md) を参照してください。
+
 ## 営業・提案関連資料
 
 提案時の説明、初回商談、社内共有で使える営業関連資料を docs/ 配下に整理しています。

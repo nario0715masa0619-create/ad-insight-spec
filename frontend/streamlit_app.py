@@ -7,6 +7,114 @@ import time
 import html as html_module
 from datetime import datetime
 
+# 招待制モニターベータ: 全APIリクエストが同じセッションを経由するようにし、
+# ログイン後は Authorization ヘッダーをここに一度セットするだけで
+# /analyze・一覧・詳細・削除・検証APIすべてに自動で乗る（呼び出し箇所ごとに
+# ヘッダーを持ち回らずに済む）。
+api_session = requests.Session()
+
+
+def api_headers_set(token):
+    if token:
+        api_session.headers["Authorization"] = f"Bearer {token}"
+    else:
+        api_session.headers.pop("Authorization", None)
+
+
+def render_login_gate() -> bool:
+    """
+    招待制モニターベータのログインゲート。
+
+    未ログイン時はログインフォームのみを表示して False を返す（呼び出し側は
+    これを見てアプリ本体の描画を st.stop() で止める）。ログイン済みなら
+    サイドバーに会社名・ベータ表示・今月の利用状況・ログアウトボタンを
+    描画して True を返す。
+    """
+    if st.session_state.get("auth_token") and st.session_state.get("auth_user"):
+        _render_sidebar_status()
+        return True
+
+    st.markdown("### 🔐 モニターベータ ログイン")
+    st.caption(
+        "CampaignPilotは現在、招待されたモニター企業様のみご利用いただける"
+        "ベータ版として提供しています。招待時にお伝えしたメールアドレス・"
+        "パスワードでログインしてください。"
+    )
+    with st.form(key="login_form"):
+        email = st.text_input("メールアドレス", key="login_email_input")
+        password = st.text_input("パスワード", type="password", key="login_password_input")
+        submitted = st.form_submit_button("ログイン")
+
+    if submitted:
+        try:
+            response = api_session.post(
+                f"{AUTH_API_BASE_URL}/login",
+                json={"email": email, "password": password},
+                timeout=15,
+            )
+        except Exception as e:
+            render_api_exception(e)
+            return False
+
+        if response.status_code == 200:
+            body = response.json()
+            st.session_state["auth_token"] = body["session_token"]
+            st.session_state["auth_user"] = body
+            api_headers_set(body["session_token"])
+            st.rerun()
+        else:
+            try:
+                message = response.json().get("error", "ログインに失敗しました。")
+            except Exception:
+                message = "ログインに失敗しました。"
+            st.error(f"❌ {message}")
+
+    return False
+
+
+def refresh_auth_usage():
+    """分析実行直後などに、サイドバーの「今月の利用数/残数」表示を最新化する。
+    失敗しても静かに諦める（表示が一拍古いままになるだけで、機能自体は継続する）。"""
+    try:
+        response = api_session.get(f"{AUTH_API_BASE_URL}/me", timeout=10)
+        if response.status_code == 200:
+            st.session_state["auth_user"] = response.json()
+    except Exception:
+        pass
+
+
+def _render_sidebar_status():
+    user = st.session_state.get("auth_user") or {}
+    company = user.get("company") or {}
+    usage = user.get("usage") or {}
+    with st.sidebar:
+        st.markdown("### 🧪 モニターベータ版")
+        st.caption(
+            "招待制モニターベータとして提供中です。仕様は予告なく変更される場合があります。"
+            "気づいた点はぜひフィードバックにご協力ください。"
+        )
+        st.write(f"**{company.get('name', '—')}**")
+        st.caption(user.get("email", ""))
+        if usage:
+            st.metric(
+                "今月の分析利用数",
+                f"{usage.get('used', 0)} / {usage.get('limit', 0)}",
+                delta=f"残り{usage.get('remaining', 0)}回",
+                delta_color="off",
+            )
+            if usage.get("limit_reached"):
+                st.error("⚠️ 今月の上限に達しています。上限は毎月1日にリセットされます。追加が必要な場合は管理者にお問い合わせください。")
+        if st.button("ログアウト", key="logout_button"):
+            try:
+                api_session.post(f"{AUTH_API_BASE_URL}/logout", timeout=10)
+            except Exception:
+                pass
+            st.session_state.pop("auth_token", None)
+            st.session_state.pop("auth_user", None)
+            api_headers_set(None)
+            st.rerun()
+        st.divider()
+
 
 def render_api_exception(e: Exception):
     # requests.exceptions.ConnectionError（backend未起動・落ちている等）や
@@ -68,7 +176,7 @@ def run_analyze_with_progress(files: dict, data: dict):
 
     def _worker():
         try:
-            result["response"] = requests.post(
+            result["response"] = api_session.post(
                 f"{API_BASE_URL}/analyze", files=files, data=data, timeout=ANALYZE_REQUEST_TIMEOUT_SECONDS
             )
         except Exception as e:
@@ -141,7 +249,7 @@ def refresh_saved_list():
     skip = st.session_state.get(widget_key("saved_list", "skip"), 0)
     limit = st.session_state.get(widget_key("saved_list", "limit"), 10)
     try:
-        response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
+        response = api_session.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
         if response.status_code == 200:
             st.session_state["list_items"] = response.json().get("items", [])
     except Exception:
@@ -245,7 +353,7 @@ def restore_analysis_result_from_query_params():
         url = f"{API_BASE_URL}/{asset_id}"
         if version:
             url += f"?version={version}"
-        response = requests.get(url, timeout=10)
+        response = api_session.get(url, timeout=10)
         if response.status_code == 200:
             result = response.json()
             st.session_state["analysis_result"] = result
@@ -1124,7 +1232,7 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
             ):
                 with st.spinner(f"🗑️ {asset_id} を削除中..."):
                     try:
-                        response = requests.delete(f"{API_BASE_URL}/{asset_id}")
+                        response = api_session.delete(f"{API_BASE_URL}/{asset_id}")
                         if response.status_code == 200:
                             st.session_state[delete_dialog_open_key] = False
                             if on_delete_success:
@@ -1155,10 +1263,25 @@ st.set_page_config(
     },
 )
 st.title("📊 CampaignPilot")
+st.caption("🧪 モニターベータ版：招待された企業様のみご利用いただけます。")
 
 # API ベース URL（環境に応じて変更可）
 API_BASE_URL = "http://localhost:8000/api/v1/specs"
 VERIFICATION_API_BASE_URL = "http://localhost:8000/api/v1/verification"
+AUTH_API_BASE_URL = "http://localhost:8000/api/v1/auth"
+
+if not render_login_gate():
+    st.stop()
+
+with st.expander("🧪 モニターベータ版のご利用にあたって", expanded=False):
+    st.markdown(
+        "- 本サービスは**招待制のモニターベータ版**です。一般公開・自由登録は行っていません。\n"
+        "- 会社ごとに**月間の分析実行回数の上限**があります。上限は毎月1日にリセットされます。\n"
+        "- ベータ版のため、**機能・画面・分析ロジックは予告なく変更**される場合があります。\n"
+        "- 気づいた不具合やご意見は、ぜひ担当者までフィードバックとしてお寄せください。\n"
+        "- アップロードいただく広告クリエイティブ・LP・KPIデータは分析目的にのみ利用します。取り扱いにご不安がある場合は事前にご相談ください。\n"
+        "- 追加の利用枠が必要な場合は、管理者（弊社担当者）までお問い合わせください。"
+    )
 
 init_session_state()
 init_verification_session_state()
@@ -1275,6 +1398,8 @@ with tab_new:
                 # ページリロード等でセッションが失われても復元できるよう、
                 # URLにも同じ asset_id/version を残しておく。
                 set_analysis_result_query_params(result_id, result_version)
+                # 今月の利用数が1件増えたはずなので、サイドバーの残数表示を最新化する。
+                refresh_auth_usage()
             else:
                 try:
                     err_json = response.json()
@@ -1284,7 +1409,12 @@ with tab_new:
                 st.session_state["analysis_result"] = None
                 clear_analysis_result_query_params()
 
-                if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
+                if err_json and err_json.get("error_code") == "MONTHLY_LIMIT_EXCEEDED":
+                    st.error(f"🚫 {err_json.get('error', '今月の分析上限に達しました。')}")
+                    usage = (err_json.get("details") or {}).get("usage") or {}
+                    if usage:
+                        st.caption(f"今月の利用: {usage.get('used')} / {usage.get('limit')} 回")
+                elif err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
                     st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
                     st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
                 elif err_json and str(err_json.get("error_code", "")).startswith("META_ADS_CSV_"):
@@ -1358,7 +1488,7 @@ with tab_saved:
 
         try:
             url = f"{API_BASE_URL}/{asset_id}?version={version}"
-            response = requests.get(url)
+            response = api_session.get(url)
             if response.status_code == 200:
                 detail = response.json()
 
@@ -1402,7 +1532,7 @@ with tab_saved:
         if st.button("📊 一覧取得", key=widget_key("saved_list", "fetch")):
             with st.spinner("📊 一覧を取得中..."):
                 try:
-                    response = requests.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
+                    response = api_session.get(f"{API_BASE_URL}/?skip={skip}&limit={limit}")
                     if response.status_code == 200:
                         results = response.json()
                         st.session_state["list_items"] = results.get("items", [])
@@ -1557,7 +1687,7 @@ with tab_verify:
                         "free_note": free_note,
                     }
                     try:
-                        response = requests.post(
+                        response = api_session.post(
                             f"{VERIFICATION_API_BASE_URL}/cases",
                             json={
                                 "case_name": case_name.strip(),
@@ -1581,7 +1711,7 @@ with tab_verify:
     elif st.session_state["verif_view"] == "detail" and st.session_state.get("verif_selected_case_id"):
         case_id = st.session_state["verif_selected_case_id"]
         try:
-            response = requests.get(f"{VERIFICATION_API_BASE_URL}/cases/{case_id}")
+            response = api_session.get(f"{VERIFICATION_API_BASE_URL}/cases/{case_id}")
         except Exception as e:
             response = None
             render_api_exception(e)
@@ -1623,7 +1753,7 @@ with tab_verify:
                     )
                     if st.form_submit_button("評価を保存"):
                         try:
-                            patch_response = requests.patch(
+                            patch_response = api_session.patch(
                                 f"{VERIFICATION_API_BASE_URL}/cases/{case_id}/presentation-evaluation",
                                 json={"presentation_evaluation": {"usefulness": usefulness or None, "comment": comment}},
                             )
@@ -1657,7 +1787,7 @@ with tab_verify:
                         st.error("⚠️ 提案タイトルは必須です。")
                     else:
                         try:
-                            add_response = requests.post(
+                            add_response = api_session.post(
                                 f"{VERIFICATION_API_BASE_URL}/cases/{case_id}/suggestions",
                                 json={
                                     "suggestion_key": suggestion_key.strip(),
@@ -1706,7 +1836,7 @@ with tab_verify:
                                 )
                                 if st.form_submit_button("保存"):
                                     try:
-                                        fu_response = requests.put(
+                                        fu_response = api_session.put(
                                             f"{VERIFICATION_API_BASE_URL}/suggestions/{suggestion['id']}/followups/{cp}",
                                             json={"executed": executed, "result_change": result_change or None},
                                         )
@@ -1733,7 +1863,7 @@ with tab_verify:
 
         if st.button("🔄 一覧を取得", key=widget_key("verify_list", "fetch")):
             try:
-                response = requests.get(
+                response = api_session.get(
                     f"{VERIFICATION_API_BASE_URL}/cases", params={"skip": verif_skip, "limit": verif_limit}
                 )
                 if response.status_code == 200:
