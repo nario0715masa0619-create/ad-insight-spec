@@ -119,6 +119,7 @@ streamlit run frontend/streamlit_app.py
   3. ile_plus_lp_plus_manual_kpi: KPI情報を含めたフル分析
 - **4つのエンドポイント**: nalyze, GET, GET by ID, DELETE
 - **Streamlit UI**: ファイルアップロードから分析、結果の一覧表示、詳細確認までをブラウザ上で実行可能
+- **Meta Ads CSV インポート**: Meta Ads Manager からエクスポートしたCSVを、列の整形なしでそのままアップロードしてKPIを取り込み可能（`file_plus_lp_plus_manual_kpi` モード内の新しい入力手段。詳細は [Meta Ads CSV インポートガイド](docs/META_ADS_CSV_IMPORT.md)）
 
 ## API エンドポイント
 
@@ -140,3 +141,4 @@ streamlit run frontend/streamlit_app.py
 詳細なシステム構成や運用手順については、以下のドキュメントを参照してください。
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md): システム設計・データベース設計
 - [OPERATIONS.md](docs/OPERATIONS.md): 開発・本番環境での運用ガイド
+- [META_ADS_CSV_IMPORT.md](docs/META_ADS_CSV_IMPORT.md): Meta Ads CSV インポートガイド（対応列・粒度判定・エラー時の対処）

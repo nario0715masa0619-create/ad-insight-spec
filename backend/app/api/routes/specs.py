@@ -14,6 +14,7 @@ from app.models import AdInsight
 from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
 from app.services.asset_evaluation_adapter import resolve_spec_data
+from app.services.meta_ads_csv_service import MetaAdsCsvError
 
 from app.utils.error_handler import create_error_response, ErrorResponse
 from app.utils.logging import request_id_var, trace_id_var, get_logger
@@ -250,6 +251,16 @@ async def analyze(
             # 一時ファイル削除
             shutil.rmtree(temp_dir, ignore_errors=True)
             
+    except MetaAdsCsvError as e:
+        logger.error(f"Meta Ads CSV validation error: {e.user_message}")
+        error_response, status_code = create_error_response(
+            error_message=e.user_message,
+            error_code=e.error_code,
+            status_code=422,
+            details={"missing_fields": e.missing_fields, **e.details}
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
+
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         error_response, status_code = create_error_response(
@@ -258,7 +269,7 @@ async def analyze(
             status_code=400
         )
         raise HTTPException(status_code=status_code, detail=error_response)
-    
+
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
         exc_str = str(e)

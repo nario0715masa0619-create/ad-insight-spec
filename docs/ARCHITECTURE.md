@@ -68,6 +68,17 @@ Tesseract-OCR を使用し、画像または動画フレームからテキスト
 ### ConverterService
 各 Service から出力された解析結果を集約し、最終的な `AdInsightSpec v0.2` 準拠の JSON ディクショナリに変換します。
 
+### MetaAdsCsvService（Phase 1: Meta Ads CSV インポート）
+Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや事前整形なしで受け取れるようにするサービスです。
+`AnalysisOrchestrator._step_load_kpi` が `kpi_file` の拡張子（`.csv` / `.json`）で処理を振り分けます（既存の手入力KPI(JSON)フローには影響しません）。
+
+- 日本語/英語の主要な列名ゆれを吸収し、内部フィールド（impressions/clicks/spend/conversions等）へマッピング
+- キャンペーン/広告セット/広告のいずれの粒度かを列の有無から判定し、`asset_meta.kpi_granularity` に記録
+- 複数行（日別内訳等）は主要指標を合算し、分析期間は最小開始日〜最大終了日を採用
+- 必須列（インプレッション・クリック）が無い/数値として読めない場合は `MetaAdsCsvError` を送出し、API層（`specs.py`）が 422 + 具体的な案内文で応答
+
+詳細は [docs/META_ADS_CSV_IMPORT.md](META_ADS_CSV_IMPORT.md) を参照してください。
+
 ### P0: 改善文章品質向上
 
 **スキーマ層**
