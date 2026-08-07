@@ -16,6 +16,7 @@ import logging
 import time
 
 from app.services.base_service import ServiceError, ProcessingError
+from app.services.meta_ads_csv_service import MetaAdsCsvError
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,10 @@ class AnalysisOrchestrator:
         self.lp_result: Optional[Dict[str, Any]] = None
         self.llm_result: Optional[Dict[str, Any]] = None
         self.kpi_data: Optional[Dict[str, Any]] = None
+        # kpi_path が .csv の場合のみ設定される（MetaAdsCsvService.parse_file の結果）。
+        # granularity/asset_meta(campaign_name等)/warningsを _step_load_kpi 完了後に
+        # self.metadata へマージするために保持する。
+        self.csv_import_result: Optional[Dict[str, Any]] = None
         self.final_spec: Optional[Dict[str, Any]] = None
 
     def run(self) -> Dict[str, Any]:
@@ -119,6 +124,7 @@ class AnalysisOrchestrator:
             if self.kpi_path:
                 logger.info("Step 5: Load KPI")
                 self._step_load_kpi()
+                self._merge_csv_import_into_metadata()
                 _log_step("5_load_kpi")
 
             # Step 6: Converter
@@ -141,6 +147,12 @@ class AnalysisOrchestrator:
 
             return self.final_spec or {}
 
+        except MetaAdsCsvError:
+            # MetaAdsCsvErrorはユーザー向けの具体的な案内文（user_message）を保持しており、
+            # ここでProcessingErrorに包んでしまうとAPI層（specs.py）でその案内文を
+            # 拾えなくなる。素通りさせ、specs.py側で専用ハンドリングする。
+            logger.warning("Pipeline failed: Meta Ads CSV validation error")
+            raise
         except Exception as e:
             logger.error(f"Pipeline failed: {str(e)}")
             raise ProcessingError(f"Analysis failed: {str(e)}") from e
@@ -552,7 +564,28 @@ class AnalysisOrchestrator:
     def _step_load_kpi(self) -> None:
         """
         Step 5: Load KPI (if provided)
+
+        kpi_path の拡張子が .csv の場合は Meta Ads Manager からのCSVエクスポートと
+        みなし、MetaAdsCsvService で解析する（既存の手入力KPI(JSON)フローとは
+        完全に独立した分岐で、.json 側の挙動は変更しない）。
         """
+        from pathlib import Path
+
+        suffix = Path(self.kpi_path).suffix.lower()
+
+        if suffix == ".csv":
+            from app.services.meta_ads_csv_service import MetaAdsCsvService
+            # MetaAdsCsvError はユーザー向けの案内文を持つため、そのまま伝播させる
+            # （run() の except MetaAdsCsvError で ProcessingError に包まれず素通りする）。
+            parsed = MetaAdsCsvService.parse_file(self.kpi_path)
+            self.csv_import_result = parsed
+            self.kpi_data = parsed["kpi"]
+            logger.info(
+                f"KPI loaded from Meta Ads CSV: {self.kpi_path} "
+                f"(granularity={parsed['granularity']}, rows={parsed['row_count']})"
+            )
+            return
+
         import json
         try:
             with open(self.kpi_path, 'r', encoding='utf-8') as f:
@@ -560,6 +593,37 @@ class AnalysisOrchestrator:
             logger.info(f"KPI loaded: {self.kpi_path}")
         except Exception as e:
             raise ProcessingError(f"Failed to load KPI: {str(e)}")
+
+    def _merge_csv_import_into_metadata(self) -> None:
+        """
+        Meta Ads CSV取り込みで判明した campaign_name/adset_name/ad_name/
+        analysis_period/granularity を self.metadata（asset_meta生成の元データ）へ
+        マージする。手入力KPI(JSON)フロー（self.csv_import_result is None）では
+        何もせず、既存動作を維持する。
+        """
+        if not self.csv_import_result or self.metadata is None:
+            return
+
+        csv_asset_meta = self.csv_import_result.get("asset_meta") or {}
+        for key in ("campaign_name", "adset_name", "ad_name"):
+            if csv_asset_meta.get(key):
+                self.metadata[key] = csv_asset_meta[key]
+
+        analysis_period = csv_asset_meta.get("analysis_period") or {}
+        if analysis_period.get("start") or analysis_period.get("end"):
+            self.metadata["analysis_period"] = analysis_period
+
+        self.metadata["platform"] = "meta"
+        self.metadata["kpi_source"] = "meta_ads_csv"
+        self.metadata["kpi_granularity"] = self.csv_import_result.get("granularity")
+
+        notes = [
+            f"Meta Ads CSV import: granularity={self.csv_import_result.get('granularity')}, "
+            f"rows={self.csv_import_result.get('row_count')}, "
+            f"mapped_columns={self.csv_import_result.get('column_mapping')}",
+        ]
+        notes.extend(self.csv_import_result.get("warnings") or [])
+        self.metadata["kpi_import_notes"] = notes
 
     def _step_converter(self) -> None:
         """
