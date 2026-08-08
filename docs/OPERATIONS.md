@@ -50,6 +50,12 @@ LLM_MODEL=gpt
   streamlit run frontend/streamlit_app.py
   ```
 
+起動後、Streamlit UI はログインを求めます（招待制モニターベータ導入以降、自由登録経路は
+ありません）。ローカルで動作確認するには、まず `alembic upgrade head` でDBスキーマを最新化し、
+`scripts/manage_monitor_accounts.py` でテスト用の会社・ユーザーを1件作成してください。
+詳細は [MONITOR_ACCOUNT_MANAGEMENT.md](MONITOR_ACCOUNT_MANAGEMENT.md)（管理者向け）、
+[MONITOR_BETA_OPERATION.md](MONITOR_BETA_OPERATION.md)（利用者向け）を参照してください。
+
 ### ローカル起動手順（Windows / .bat、`AIS/` 配下）
 これらは全てローカル専用で、本番（GCP VM）には一切接続しません。本番操作用の
 `AIS_Prod_*.bat` との違いは「9. AIS 運用ツール（Windows）」を参照してください。

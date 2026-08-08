@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean, UniqueConstraint, Index, ForeignKey
 from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Optional
@@ -46,6 +46,12 @@ class AdInsight(Base):
     # 詳細: docs/plans/asset_evaluation_split_phase2_tasks.md
     asset_data: Optional[dict] = Column(JSON, nullable=True)
     evaluation_data: Optional[dict] = Column(JSON, nullable=True)
+
+    # ===== 招待制モニターベータ用（データ分離・月間利用上限カウント） =====
+    # 既存データはNULLのまま残る（過去分析は特定の会社に属さない扱い＝一覧
+    # フィルタ時は現行ユーザーのcompany_idと一致しないため出てこなくなる）。
+    company_id: Optional[int] = Column(Integer, ForeignKey("monitor_companies.id"), nullable=True, index=True)
+    created_by_user_id: Optional[int] = Column(Integer, ForeignKey("monitor_users.id"), nullable=True)
 
     # ユニーク制約: (asset_id, version) の組み合わせで一意
     __table_args__ = (

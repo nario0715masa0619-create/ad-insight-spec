@@ -129,8 +129,10 @@ async def health_check():
 
 
 # ===== ルーター登録 =====
-from app.api.routes import specs, verification
+from app.api.routes import specs, verification, auth, admin
 app.include_router(specs.router)
 app.include_router(verification.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
 
 logger.info("FastAPI application initialized")

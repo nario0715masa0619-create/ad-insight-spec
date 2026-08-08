@@ -22,6 +22,8 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 from app.models.ad_insight import AdInsight
+from app.models import MonitorCompany, MonitorUser
+from app.api.deps import get_current_user
 from app.api.routes import specs as specs_module
 from app.services.meta_ads_csv_service import MetaAdsCsvError
 
@@ -47,7 +49,30 @@ def db_session():
 
 
 @pytest.fixture
-def client(db_session):
+def test_user(db_session):
+    """招待制モニターベータ導入により /analyze 等はログイン必須になったため、
+    テスト用の会社・ユーザーを1件用意し、get_current_user を差し替える。
+    monthly_credit_limit は十分大きくして、既存テストが上限に引っかからないようにする。"""
+    company = MonitorCompany(name="Test Co", slug="test-co", monthly_credit_limit=100000, is_active=True)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+
+    user = MonitorUser(
+        company_id=company.id,
+        email="tester@example.com",
+        password_hash="unused-in-tests",
+        is_active=True,
+        is_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def client(db_session, test_user):
     app = FastAPI()
     app.include_router(specs_module.router)
 
@@ -57,7 +82,11 @@ def client(db_session):
         finally:
             pass
 
+    def _override_get_current_user():
+        return test_user
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
     return TestClient(app)
 
 

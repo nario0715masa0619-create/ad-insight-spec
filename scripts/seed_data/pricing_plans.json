@@ -1,0 +1,50 @@
+{
+  "_comment": "CampaignPilotの初期プラン定義（マスタデータ）。scripts/manage_monitor_accounts.py seed-plans で pricing_plans テーブルへ投入/更新する。価格・クレジット量・文言はここを編集するだけで調整でき、コード変更・再デプロイは不要（詳細: docs/MONITOR_ACCOUNT_MANAGEMENT.md）。is_active はここでは扱わない（seedは既存プランの有効/無効状態を変更しない。廃止する場合は `update-plan --code <code> --inactive` を使うこと）。",
+  "plans": [
+    {
+      "code": "monitor",
+      "name": "Monitor",
+      "monthly_price_jpy": null,
+      "monthly_credit_limit": 100,
+      "marketing_note": "招待制モニターベータ企業向け。個別に契約条件を調整する場合は会社側で上限をoverrideすること。",
+      "is_public": false,
+      "display_order": 0
+    },
+    {
+      "code": "starter",
+      "name": "Starter",
+      "monthly_price_jpy": 29800,
+      "monthly_credit_limit": 100,
+      "marketing_note": null,
+      "is_public": true,
+      "display_order": 1
+    },
+    {
+      "code": "growth",
+      "name": "Growth",
+      "monthly_price_jpy": 79800,
+      "monthly_credit_limit": 300,
+      "marketing_note": null,
+      "is_public": true,
+      "display_order": 2
+    },
+    {
+      "code": "pro",
+      "name": "Pro",
+      "monthly_price_jpy": 149800,
+      "monthly_credit_limit": 650,
+      "marketing_note": "初期導入企業向けキャンペーン企画中",
+      "is_public": true,
+      "display_order": 3
+    },
+    {
+      "code": "enterprise",
+      "name": "Enterprise",
+      "monthly_price_jpy": null,
+      "monthly_credit_limit": 1000,
+      "marketing_note": "個別見積・個別契約。実際のクレジット上限は契約内容に応じて会社側でoverrideすることを想定した仮の値。",
+      "is_public": false,
+      "display_order": 4
+    }
+  ]
+}

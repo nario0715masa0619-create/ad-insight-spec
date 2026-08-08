@@ -8,6 +8,7 @@ from typing import Dict, Any
 
 from app.db.session import get_db
 from app.repositories import VerificationRepository
+from app.api.deps import get_current_user
 from app.schemas.verification import (
     VerificationCaseCreate,
     PresentationEvaluationUpdate,
@@ -30,10 +31,16 @@ logger = get_logger(__name__)
 # 生んでいるかを記録するための検証機能。ad_insight_spec本体（/api/v1/specs）とは
 # 完全に独立しており、既存の分析APIロジックには一切手を入れない。
 
+# 招待制モニターベータ導入に伴い、ログイン必須にする（router全体への
+# dependencies指定）。この機能は検証・QA用途であり会社単位のデータ分離は
+# 行わない（company_idの概念を持たないため）。ログイン済みであれば
+# モニター利用者・管理者を問わず全件参照できる、という割り切り。
+# 詳細: docs/MONITOR_BETA_OPERATION.md の既知の制約セクション。
 router = APIRouter(
     prefix="/api/v1/verification",
     tags=["Verification"],
     responses={404: {"description": "Not found"}},
+    dependencies=[Depends(get_current_user)],
 )
 
 
