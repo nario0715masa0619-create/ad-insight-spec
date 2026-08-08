@@ -183,6 +183,56 @@ class MonitorRepository:
         self.db.refresh(plan)
         return plan
 
+    def upsert_plan_by_code(
+        self,
+        code: str,
+        name: str,
+        monthly_credit_limit: int,
+        monthly_price_jpy: Optional[int] = None,
+        marketing_note: Optional[str] = None,
+        is_public: bool = True,
+        display_order: int = 0,
+        effective_from: Optional[datetime] = None,
+        effective_to: Optional[datetime] = None,
+    ) -> PricingPlan:
+        """
+        初期プラン投入(seed)用の冪等な upsert。update_plan()の「指定した
+        フィールドだけ部分更新する」PATCH的な挙動とは異なり、ここでは渡された
+        引数をそのプランの完全な望ましい状態として扱う（例えば
+        monthly_price_jpy=None を渡せば、既存の価格設定があっても明示的に
+        NULLへ戻す。Monitor/Enterpriseのように価格を「個別見積」で持つプランを
+        何度再投入しても意図通りの状態に揃うようにするため）。
+
+        例外として is_active には一切触れない。既存プランを無効化する運用
+        （update_plan の is_active=False）は明示的な操作であるべきで、
+        seedの再実行で意図せず復活してしまうのを避けるため。
+        """
+        plan = self.get_plan_by_code(code)
+        if plan is None:
+            return self.create_plan(
+                code=code,
+                name=name,
+                monthly_credit_limit=monthly_credit_limit,
+                monthly_price_jpy=monthly_price_jpy,
+                marketing_note=marketing_note,
+                is_public=is_public,
+                display_order=display_order,
+                effective_from=effective_from,
+                effective_to=effective_to,
+            )
+
+        plan.name = name
+        plan.monthly_credit_limit = monthly_credit_limit
+        plan.monthly_price_jpy = monthly_price_jpy
+        plan.marketing_note = marketing_note
+        plan.is_public = is_public
+        plan.display_order = display_order
+        plan.effective_from = effective_from
+        plan.effective_to = effective_to
+        self.db.commit()
+        self.db.refresh(plan)
+        return plan
+
     def get_effective_plan(self, company: MonitorCompany, now: Optional[datetime] = None) -> Optional[PricingPlan]:
         """
         company に紐づくプランが「現時点で有効」なら返す。無効・期間外・

@@ -27,6 +27,32 @@ python ../scripts/manage_monitor_accounts.py create-user --company-slug internal
 以降のモニター企業・ユーザーは、この管理者アカウントでログインして管理APIから追加しても、
 引き続きCLIで追加しても構いません。
 
+## 1-1. 初期プランを投入する（環境構築時に1度）
+
+新しい環境（開発機・検証環境など）を用意したら、会社を作る前に初期プラン5種
+（Monitor / Starter / Growth / Pro / Enterprise）を投入してください。定義は
+`scripts/seed_data/pricing_plans.json` にマスタデータとして保持しており、
+価格・クレジット量・文言はこのJSONを編集するだけで調整できます（コード変更・
+再デプロイ不要）。
+
+```bash
+cd backend
+python ../scripts/manage_monitor_accounts.py seed-plans --dry-run   # まず反映内容を確認
+python ../scripts/manage_monitor_accounts.py seed-plans             # 実際に投入/更新
+python ../scripts/manage_monitor_accounts.py list-plans             # 結果を確認
+```
+
+- **何度実行しても安全**です（`code` をキーに upsert する。既存プランは値を最新化するだけで、
+  重複作成はされません）。
+- **`is_active` はseedの対象外**です。一度 `update-plan --code X --inactive` で無効化した
+  プランは、seedを再実行しても復活しません（廃止判断は明示的な操作でのみ行う設計）。
+- 価格やクレジット量を変えたい場合は `scripts/seed_data/pricing_plans.json` を編集して
+  再実行するのが基本の運用です。個別のプランだけ即座に触りたい場合は
+  「2-1. 価格・プランを定義する」の `update-plan` を使っても構いません（どちらも最終的に
+  同じ `pricing_plans` テーブルを更新します）。
+- **本番DBへの投入は今回のタスクでは行っていません。** 開発/検証環境での再現手段として
+  整備したものです。本番反映時は「10. 本番反映時の注意」を参照してください。
+
 ## 2. モニター企業を追加する
 
 ### CLI
@@ -53,6 +79,10 @@ curl -X POST http://localhost:8000/api/v1/admin/companies \
 テーブルで管理します。会社は個別上書きを持たない限り、紐づいたプランの
 `monthly_credit_limit` を継承します（優先順位: 個別上書き > プラン > 既定値100。
 詳細は [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md) 参照）。
+
+**通常は「1-1. 初期プランを投入する」の `seed-plans` で5種とも揃うため、
+このセクションは個別に1プランだけ追加・調整したい場合や、初期5種以外の
+特別なプランを作りたい場合にのみ使ってください。**
 
 ### CLI
 ```bash
@@ -106,6 +136,29 @@ python scripts/manage_monitor_accounts.py clear-limit-override --company-slug ac
 ```
 管理APIでは `PATCH /api/v1/admin/companies/{company_id}` に `{"clear_credit_limit_override": true}`
 を送信します（`monthly_credit_limit`と同時に指定した場合はclearが優先されます）。
+
+## 2-2. plan と override の使い分けルール
+
+**基本方針: 会社には必ずプランを割り当て、個別上書き(override)は例外対応にのみ使う。**
+「毎回overrideで微調整する」状態は運用が属人化するため避けてください。
+
+| ケース | 推奨する扱い |
+|---|---|
+| 通常のモニター企業 | `monitor` プランを割り当てる（override無し） |
+| 商用契約のStarter/Growth/Pro顧客 | 該当プランを割り当てる（override無し） |
+| 今月だけ検証のため増枠したい | override を一時設定し、**検証が終わったら`clear-limit-override`で必ず戻す** |
+| そのモニター企業だけ恒常的に上限が違う特殊契約 | override を設定したままにする（この場合はoverrideが「その会社の契約内容」を表すので妥当） |
+| Enterprise（個別契約） | `enterprise` プランを割り当てたうえで、契約ごとの実際の上限を override で設定するのが基本
+  （`enterprise`プラン自体のクレジット量はあくまで仮の値であり、個々の契約はほぼ必ずoverrideを伴う） |
+| プランを何も割り当てていない会社 | 既定値（100クレジット）にフォールバックするが、**これは暫定状態**として扱い、
+  早めに `monitor` または該当プランを割り当てること（`list-usage`の`limit source`列が
+  `fallback`の会社は、割り当て漏れの可能性を疑う） |
+
+**`is_public=false` のプラン（Monitor/Enterprise）について**: これは「外部の価格表ページに
+表示するかどうか」を区別するためだけのフラグで、機能的な制限は一切ありません
+（`is_public=false`でも通常どおり会社に割り当てて使えます）。今回は価格表ページ自体を
+実装していないため、実運用上は「Monitor/Enterpriseは一般顧客向けに営業提案する対象では
+ない」という位置づけの記録以上の意味は持ちません。
 
 ## 3. モニターユーザーを招待する
 
@@ -162,14 +215,24 @@ CREDIT_COST_HEAVY=3      # + LP + KPI分析（file_plus_lp_plus_manual_kpi）
 python scripts/manage_monitor_accounts.py list-usage
 ```
 ```
-slug                 name                     active   used/limit(credits)   remaining
-acme                 株式会社Acme              True     12/100                88
+slug                 name                     limit source       active   used/limit(credits)   remaining
+acme                 株式会社Acme              plan:growth        True     12/300                288
+sample-monitor       サンプル社（モニター）     plan:monitor       True     8/100                 92
+special-co           特別契約社                override           True     40/500                460
+new-co               新規登録直後の会社          fallback           True     0/100                 100
 ```
 
-管理APIでは `GET /api/v1/admin/companies` が同等の情報（会社ごとの `usage_this_month`、
-単位はクレジット）を返します。個々の消費履歴（誰が・いつ・どのモードで・何クレジット消費したか）は
-`credit_usage_logs` テーブルに記録されますが、今回のスコープでは一覧APIは用意していません
-（必要な場合はDBを直接参照するか、別途エンドポイント追加を検討してください）。
+`limit source` 列は実効上限がどこから来ているかを示します。
+- `plan:<code>` — 割り当てたプランの値を使用中（通常の状態）
+- `override` — 会社ごとの個別上書きを使用中
+- `plan:<code>(inactive)` — プランは割り当てられているが無効化/期間外のため無視され、
+  実際にはフォールバックへ落ちている（要確認）
+- `fallback` — プランも上書きも無く既定値(100)を使用中（多くの場合、割り当て漏れ）
+
+管理APIでは `GET /api/v1/admin/companies` が同等の情報（`limit_source` フィールド、および
+`usage_this_month`、単位はクレジット）を返します。個々の消費履歴（誰が・いつ・どのモードで・
+何クレジット消費したか）は`credit_usage_logs` テーブルに記録されますが、今回のスコープでは
+一覧APIは用意していません（必要な場合はDBを直接参照するか、別途エンドポイント追加を検討してください）。
 
 ## 6. 会社・ユーザーを停止/再開する
 
@@ -198,7 +261,81 @@ python scripts/manage_monitor_accounts.py reset-password --email tanaka@acme.exa
 `--password` を指定しない場合はランダム生成され、標準出力に表示されます。
 管理APIでは `PATCH /api/v1/admin/users/{id}` に `{"new_password": "..."}` を送信します。
 
-## 8. 本番反映時の注意（CLAUDE.md準拠）
+## 8. 新規モニター企業オンボーディングのクイックスタート
+
+初めてモニター企業を迎える際の一連の流れです（環境構築直後で「1-1. 初期プランを投入する」
+が済んでいる前提）。
+
+```bash
+cd backend
+
+# 1. 会社を作成（この時点ではプラン未割当）
+python ../scripts/manage_monitor_accounts.py create-company --name "株式会社Acme" --slug acme
+
+# 2. 初期プラン一覧を確認
+python ../scripts/manage_monitor_accounts.py list-plans
+
+# 3. モニター企業向けプランを割り当てる（override無しで開始するのが基本）
+python ../scripts/manage_monitor_accounts.py assign-plan --company-slug acme --plan-code monitor
+
+# 4. ユーザーを招待する
+python ../scripts/manage_monitor_accounts.py create-user --company-slug acme --email tanaka@acme.example
+
+# 5. 割り当て内容と利用状況を確認する
+python ../scripts/manage_monitor_accounts.py list-usage
+
+# 6. （必要な場合のみ）個別上書きを設定し、不要になったら解除する
+python ../scripts/manage_monitor_accounts.py set-limit --company-slug acme --limit 150
+python ../scripts/manage_monitor_accounts.py clear-limit-override --company-slug acme
+```
+
+ステップ1で `--limit` を指定していない点に注意してください。プラン割り当て前提の
+運用では、会社作成時に個別の数値を決め打ちしないほうが、後から
+「なぜこの数字なのか」を追いかけずに済みます。
+
+## 9. よくある運用パターン
+
+**新規モニター企業の受け入れ**: 上記クイックスタートのとおり、`monitor` プランを
+割り当てるだけで完了します。個別の交渉が必要な特別条件がある場合のみ override を使います。
+
+**一時的な増枠（検証・キャンペーン等）**:
+```bash
+python scripts/manage_monitor_accounts.py set-limit --company-slug acme --limit 300
+# ...検証期間が終わったら必ず戻す...
+python scripts/manage_monitor_accounts.py clear-limit-override --company-slug acme
+```
+override を設定しっぱなしにしないよう、`notes`（`PATCH /api/v1/admin/companies/{id}`の
+`notes`フィールド、CLIには未対応）に「いつまでの一時増枠か」を書き残しておくことを推奨します。
+
+**モニター企業が商用プランへ移行する（例: Monitor → Growth）**:
+```bash
+python scripts/manage_monitor_accounts.py assign-plan --company-slug acme --plan-code growth --clear-override
+```
+`--clear-override` を付けることで、Monitor時代に個別上書きが残っていても確実にGrowthの
+上限へ切り替わります。
+
+**Enterprise（個別契約）の会社を追加する**:
+```bash
+python scripts/manage_monitor_accounts.py assign-plan --company-slug bigcorp --plan-code enterprise
+python scripts/manage_monitor_accounts.py set-limit --company-slug bigcorp --limit 5000   # 契約内容に応じた実際の上限
+```
+`enterprise` プランのクレジット量はあくまで仮の値なので、実運用では必ず override で
+契約内容に応じた実際の値を設定してください。
+
+**価格・プラン内容を見直す（全社に反映したい場合）**:
+`scripts/seed_data/pricing_plans.json` を編集し、`seed-plans --dry-run` で変更内容を
+確認してから `seed-plans` を実行してください。そのプランを使っている全社の実効上限に
+即座に反映されます（個別上書きを持つ会社は影響を受けません）。
+
+**プランを廃止する**:
+```bash
+python scripts/manage_monitor_accounts.py update-plan --code legacy-plan --inactive
+```
+割り当てられていた会社は次回アクセス時から自動的にフォールバック値（100クレジット）に
+落ちます。`list-usage`で`limit source`が`plan:legacy-plan(inactive)`と表示されるので、
+該当会社には別のプランを速やかに割り当て直してください。
+
+## 10. 本番反映時の注意（CLAUDE.md準拠）
 
 - この機能一式はDBスキーマ変更（Alembicマイグレーション `f3a1c9d2e8b0` および
   `pricing_plans` テーブル・`monitor_companies.plan_id` を追加する `b7e2f4a1c3d5`）を
@@ -212,3 +349,8 @@ python scripts/manage_monitor_accounts.py reset-password --email tanaka@acme.exa
   NULL行を既定値100で埋め戻してからNOT NULL制約を復元します。
 - 環境変数・secrets の追加はありません（パスワードハッシュは標準ライブラリの
   PBKDF2のみで生成し、外部ライブラリや追加のsecret keyを必要としません）。
+- `scripts/seed_data/pricing_plans.json` の投入（`seed-plans`）は**本番DBに対しては
+  実行していません**。本番へ反映する場合も、まずマイグレーション適用後に
+  `seed-plans --dry-run` で内容を確認してから実行することを推奨します
+  （冪等なので誤って複数回実行しても壊れませんが、実DBに向けた初回実行は
+  他の変更と同様に計画的に行ってください）。

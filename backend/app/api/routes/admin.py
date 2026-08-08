@@ -103,6 +103,20 @@ def _plan_dict(plan) -> Dict[str, Any]:
     }
 
 
+def _describe_limit_source(repo: MonitorRepository, company) -> str:
+    """実効クレジット上限がどこから来ているか（override/plan/plan(inactive)/fallback）
+    をAPIレスポンスからも一目で判断できるようにする（CLIのlist-usageと同じロジック）。"""
+    if company.monthly_credit_limit is not None:
+        return "override"
+    if company.plan_id:
+        effective_plan = repo.get_effective_plan(company)
+        if effective_plan:
+            return f"plan:{effective_plan.code}"
+        dangling_plan = repo.get_plan_by_id(company.plan_id)
+        return f"plan:{dangling_plan.code if dangling_plan else '?'}(inactive)"
+    return "fallback"
+
+
 def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
     usage = repo.get_usage_summary(company)
     effective_plan = repo.get_effective_plan(company)
@@ -115,6 +129,7 @@ def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
         "monthly_credit_limit": company.monthly_credit_limit,
         "plan_id": company.plan_id,
         "plan": _plan_dict(effective_plan) if effective_plan else None,
+        "limit_source": _describe_limit_source(repo, company),
         "is_active": company.is_active,
         "notes": company.notes,
         "created_at": company.created_at.isoformat(),

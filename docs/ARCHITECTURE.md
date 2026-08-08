@@ -138,7 +138,11 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
   `marketing_note`（例:「初期導入企業向けキャンペーン企画中」）、`is_public`、
   `display_order`、`effective_from`/`effective_to`（有効期間、両方NULLなら常時有効）、
   `is_active` を持つ。決済・請求とは接続していない（あくまで会社への
-  デフォルトクレジット上限の定義元）。
+  デフォルトクレジット上限の定義元）。初期5プランのマスタデータは
+  `scripts/seed_data/pricing_plans.json` に外出しし、`manage_monitor_accounts.py
+  seed-plans`（`MonitorRepository.upsert_plan_by_code`、`code`キーの冪等upsert）で
+  投入/更新する。Alembicマイグレーションにはスキーマ変更のみを持たせ、価格データは
+  焼き込まない方針（詳細: [MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md)）。
 - `monitor_companies`: モニター企業（テナント）。`plan_id`（`pricing_plans.id`への
   任意FK）で紐づくプランを持てる。`monthly_credit_limit` は会社ごとの**個別上書き**
   （NULL可。NULLは「上書きなし、プランまたは既定値に従う」を意味する）。実効上限は

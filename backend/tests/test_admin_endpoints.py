@@ -280,6 +280,7 @@ class TestCompanyPlanAssignment:
         assert body["monthly_credit_limit"] is None
         assert body["plan"]["code"] == "growth"
         assert body["usage_this_month"]["limit"] == 300
+        assert body["limit_source"] == "plan:growth"
 
     def test_create_company_with_override_and_plan_uses_override(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
@@ -295,6 +296,7 @@ class TestCompanyPlanAssignment:
         body = response.json()
         assert body["monthly_credit_limit"] == 999
         assert body["usage_this_month"]["limit"] == 999
+        assert body["limit_source"] == "override"
 
     def test_create_company_with_unknown_plan_id_returns_404(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
@@ -332,9 +334,35 @@ class TestCompanyPlanAssignment:
         body = response.json()
         assert body["monthly_credit_limit"] is None
         assert body["usage_this_month"]["limit"] == 300
+        assert body["limit_source"] == "plan:growth3"
 
     def test_update_company_with_unknown_plan_id_returns_404(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
         company_id = seed_company_and_users["company"].id
         response = client.patch(f"/api/v1/admin/companies/{company_id}", json={"plan_id": 999999})
         assert response.status_code == 404
+
+    def test_limit_source_is_fallback_when_no_plan_and_no_override(self, db_session, seed_company_and_users):
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        company_id = seed_company_and_users["company"].id
+        client.patch(f"/api/v1/admin/companies/{company_id}", json={"clear_credit_limit_override": True})
+
+        response = client.get("/api/v1/admin/companies")
+        body = next(c for c in response.json() if c["id"] == company_id)
+        assert body["limit_source"] == "fallback"
+        assert body["usage_this_month"]["limit"] == 100  # DEFAULT_MONTHLY_CREDIT_LIMIT
+
+    def test_limit_source_shows_inactive_when_assigned_plan_is_deactivated(self, db_session, seed_company_and_users):
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        plan_id = client.post(
+            "/api/v1/admin/plans", json={"code": "growth-deact", "name": "Growth", "monthly_credit_limit": 300}
+        ).json()["id"]
+        company_id = seed_company_and_users["company"].id
+        client.patch(f"/api/v1/admin/companies/{company_id}", json={"plan_id": plan_id, "clear_credit_limit_override": True})
+        client.patch(f"/api/v1/admin/plans/{plan_id}", json={"is_active": False})
+
+        response = client.get("/api/v1/admin/companies")
+        body = next(c for c in response.json() if c["id"] == company_id)
+        assert body["limit_source"] == "plan:growth-deact(inactive)"
+        assert body["plan"] is None  # 無効なプランはeffective_planとしては返さない
+        assert body["usage_this_month"]["limit"] == 100  # フォールバックに落ちる

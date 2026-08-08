@@ -25,10 +25,18 @@ PYTHONPATH を通して実行されることを前提とする（他の scripts/
   python ../scripts/manage_monitor_accounts.py update-plan --code growth --credits 350
   python ../scripts/manage_monitor_accounts.py assign-plan --company-slug acme --plan-code growth
   python ../scripts/manage_monitor_accounts.py clear-limit-override --company-slug acme
+
+初期プラン5種（Monitor/Starter/Growth/Pro/Enterprise）は scripts/seed_data/pricing_plans.json
+に定義してあり、seed-plans で一括投入/更新できる（何度実行しても安全な冪等操作）。
+  python ../scripts/manage_monitor_accounts.py seed-plans --dry-run   # 反映内容を事前確認
+  python ../scripts/manage_monitor_accounts.py seed-plans             # 実際に投入/更新
 """
 import argparse
+import json
 import secrets
 import sys
+from datetime import datetime
+from pathlib import Path
 
 try:
     from app.db.session import SessionLocal
@@ -42,6 +50,28 @@ except ImportError:
         file=sys.stderr,
     )
     sys.exit(1)
+
+# 初期プラン定義のマスタデータ（価格・クレジット量・文言はコードではなくここで
+# 管理する）。seed-plans のデフォルト読み込み先。--file で差し替え可能。
+DEFAULT_SEED_PLANS_PATH = Path(__file__).resolve().parent / "seed_data" / "pricing_plans.json"
+
+_PLAN_FIELD_KEYS = (
+    "code",
+    "name",
+    "monthly_price_jpy",
+    "monthly_credit_limit",
+    "marketing_note",
+    "is_public",
+    "display_order",
+    "effective_from",
+    "effective_to",
+)
+
+
+def _parse_iso_datetime(value):
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def cmd_create_company(args: argparse.Namespace) -> None:
@@ -237,6 +267,54 @@ def cmd_update_plan(args: argparse.Namespace) -> None:
         db.close()
 
 
+def cmd_seed_plans(args: argparse.Namespace) -> None:
+    seed_path = Path(args.file) if args.file else DEFAULT_SEED_PLANS_PATH
+    if not seed_path.exists():
+        print(f"Error: seed file not found: {seed_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(seed_path, encoding="utf-8") as f:
+        data = json.load(f)
+    plan_defs = data.get("plans", [])
+    if not plan_defs:
+        print(f"No plans found in {seed_path}.")
+        return
+
+    db = SessionLocal()
+    try:
+        Base.metadata.create_all(bind=engine)
+        repo = MonitorRepository(db)
+
+        for raw in plan_defs:
+            fields = {key: raw.get(key) for key in _PLAN_FIELD_KEYS if key in raw}
+            fields.setdefault("is_public", True)
+            fields.setdefault("display_order", 0)
+            fields["effective_from"] = _parse_iso_datetime(fields.get("effective_from"))
+            fields["effective_to"] = _parse_iso_datetime(fields.get("effective_to"))
+
+            code = fields["code"]
+            existing = repo.get_plan_by_code(code)
+            action = "update" if existing else "create"
+
+            if args.dry_run:
+                print(f"[dry-run] would {action} plan '{code}': {fields}")
+                continue
+
+            plan = repo.upsert_plan_by_code(**fields)
+            print(
+                f"{action}d plan '{plan.code}': price={plan.monthly_price_jpy} "
+                f"credits={plan.monthly_credit_limit} public={plan.is_public} "
+                f"order={plan.display_order}"
+            )
+
+        if args.dry_run:
+            print(f"[dry-run] no changes written. Re-run without --dry-run to apply {len(plan_defs)} plan(s) from {seed_path}.")
+        else:
+            print(f"Seeded {len(plan_defs)} plan(s) from {seed_path}. Existing plans' is_active was left untouched.")
+    finally:
+        db.close()
+
+
 def cmd_deactivate_company(args: argparse.Namespace) -> None:
     _set_company_active(args.company_slug, is_active=False)
 
@@ -298,6 +376,23 @@ def cmd_reset_password(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _describe_limit_source(repo: MonitorRepository, company) -> str:
+    """実効クレジット上限がどこから来ているか（個別上書き／有効なプラン／
+    プランは紐づいているが今は無効・期限外／どちらも無くフォールパック）を
+    一目で分かるようにする。運用担当が『なぜこの上限になっているか』を
+    list-usage の出力だけで判断できるようにするための表示専用ロジック。"""
+    if company.monthly_credit_limit is not None:
+        return "override"
+    if company.plan_id:
+        effective_plan = repo.get_effective_plan(company)
+        if effective_plan:
+            return f"plan:{effective_plan.code}"
+        dangling_plan = repo.get_plan_by_id(company.plan_id)
+        label = dangling_plan.code if dangling_plan else "?"
+        return f"plan:{label}(inactive)"
+    return "fallback"
+
+
 def cmd_list_usage(args: argparse.Namespace) -> None:
     db = SessionLocal()
     try:
@@ -306,13 +401,15 @@ def cmd_list_usage(args: argparse.Namespace) -> None:
         if not companies:
             print("No monitor companies registered yet.")
             return
-        print(f"{'slug':<20} {'name':<24} {'plan':<10} {'active':<8} {'used/limit(credits)':<20} {'remaining':<10}")
+        print(
+            f"{'slug':<20} {'name':<24} {'limit source':<18} {'active':<8} "
+            f"{'used/limit(credits)':<20} {'remaining':<10}"
+        )
         for company in companies:
             usage = repo.get_usage_summary(company)
-            plan = repo.get_plan_by_id(company.plan_id) if company.plan_id else None
-            plan_label = plan.code if plan else "-"
+            source = _describe_limit_source(repo, company)
             print(
-                f"{company.slug:<20} {company.name:<24} {plan_label:<10} {str(company.is_active):<8} "
+                f"{company.slug:<20} {company.name:<24} {source:<18} {str(company.is_active):<8} "
                 f"{usage['used']}/{usage['limit']:<8} {usage['remaining']:<10}"
             )
     finally:
@@ -402,6 +499,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("list-plans", help="Show all pricing plans")
     p.set_defaults(func=cmd_list_plans)
+
+    p = sub.add_parser(
+        "seed-plans",
+        help="Idempotently create/update the initial pricing plans from a JSON master file "
+        f"(default: {DEFAULT_SEED_PLANS_PATH.name} under scripts/seed_data/)",
+    )
+    p.add_argument("--file", required=False, help="Path to a plans JSON file (default: scripts/seed_data/pricing_plans.json)")
+    p.add_argument("--dry-run", action="store_true", help="Show what would change without writing to the database")
+    p.set_defaults(func=cmd_seed_plans)
 
     p = sub.add_parser("update-plan", help="Update an existing pricing plan")
     p.add_argument("--code", required=True)
