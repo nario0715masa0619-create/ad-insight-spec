@@ -123,7 +123,7 @@ CampaignPilotは「月◯件まで」という単純な件数制ではなく、*
 A. 自己変更機能は現状ありません。管理者にパスワード再発行を依頼してください。
 
 **Q. クレジットを使い切ってしまった。今月中に追加で分析したい**
-A. 管理者にクレジット上限の引き上げを依頼してください（[MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) の「上限を変更する」参照）。
+A. 管理者にクレジット上限の引き上げを依頼してください（[MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) の「4. クレジット上限を変更する」参照）。
 
 **Q. 分析が失敗した。クレジットは消費されますか**
 A. されません。クレジットは分析が成功した場合にのみ消費が確定します。
