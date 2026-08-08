@@ -123,7 +123,7 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 | company_id | INT (nullable, FK) | 招待制モニターベータ導入以降、作成した会社を記録（データ分離・月次クレジット利用量カウントに使用。既存レコードはNULL） |
 | created_by_user_id | INT (nullable, FK) | 作成したモニターユーザー |
 
-#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions` / `credit_usage_logs`）
+#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions` / `credit_usage_logs` / `pricing_plans`）
 
 招待制モニターベータ公開のために追加したテーブル群です。詳細なカラム定義は
 `backend/app/models/beta_access.py`、運用手順は
@@ -132,7 +132,19 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、設計背景:
 [クレジット課金設計案](./campaignpilot_credit_billing_design.md)）。
 
-- `monitor_companies`: モニター企業（テナント）。`monthly_credit_limit`（月次クレジット上限）を保持。
+- `pricing_plans`: 価格・プラン定義（Starter/Growth/Pro/Monitor/Enterpriseなど）を
+  コードの定数ではなくデータとして保持するテーブル。`code`（人間可読な一意キー）、
+  `name`、`monthly_price_jpy`（個別見積プランはNULL可）、`monthly_credit_limit`、
+  `marketing_note`（例:「初期導入企業向けキャンペーン企画中」）、`is_public`、
+  `display_order`、`effective_from`/`effective_to`（有効期間、両方NULLなら常時有効）、
+  `is_active` を持つ。決済・請求とは接続していない（あくまで会社への
+  デフォルトクレジット上限の定義元）。
+- `monitor_companies`: モニター企業（テナント）。`plan_id`（`pricing_plans.id`への
+  任意FK）で紐づくプランを持てる。`monthly_credit_limit` は会社ごとの**個別上書き**
+  （NULL可。NULLは「上書きなし、プランまたは既定値に従う」を意味する）。実効上限は
+  「個別上書き(company.monthly_credit_limit) > 紐づいたプランの
+  monthly_credit_limit（有効な場合のみ） > 既定のフォールバック値(100)」の優先順位で
+  `MonitorRepository.resolve_monthly_credit_limit()` が解決する。
 - `monitor_users`: 招待されたユーザー。自由登録経路は存在せず、管理者/CLIのみが作成可能。
 - `credit_usage_logs`: クレジット消費ログ。分析が成功した時のみ行が作られる
   （「実行前チェック→成功時のみ消費確定」方式のため、失敗した分析は一切現れない）。

@@ -4,15 +4,55 @@ from sqlalchemy.orm import relationship
 from app.db.base import Base
 
 
+class PricingPlan(Base):
+    """
+    価格・プラン定義（Starter/Growth/Pro/Monitor/Enterpriseなど）をデータとして
+    保持するためのテーブル。プラン名・価格・付与クレジット・マーケティング文言を
+    コードの定数ではなくここに持たせることで、価格改定やキャンペーン文言の変更を
+    コード変更・再デプロイなしで行えるようにする。
+
+    決済・請求とは接続しておらず、あくまで「会社にどれだけのクレジット上限が
+    デフォルトで付与されるか」の定義元としてのみ機能する（商用販売導線・
+    実際の請求処理は今回のスコープ外。docs/MONITOR_BETA_OPERATION.md参照）。
+    """
+
+    __tablename__ = "pricing_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # 会社への紐付けは plan_id（FK）で行うが、CLI/APIでの人間向け指定・検索には
+    # code を使う（例: "starter"）。id参照にすることで、後からcodeの文言を
+    # 調整してもFK関係自体は壊れない。
+    code = Column(String(50), nullable=False, unique=True, index=True)
+    name = Column(String(200), nullable=False)
+    # 個別見積（Enterprise等）は価格を公開しないため NULL を許容する。
+    monthly_price_jpy = Column(Integer, nullable=True)
+    monthly_credit_limit = Column(Integer, nullable=False)
+    marketing_note = Column(Text, nullable=True)
+    is_public = Column(Boolean, nullable=False, default=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    # 両方NULLなら常に有効。将来の価格改定時に旧プランを終了させつつ履歴として
+    # 残す、新プランを予告日から有効にする、といった運用に使う。
+    effective_from = Column(DateTime, nullable=True)
+    effective_to = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    companies = relationship("MonitorCompany", back_populates="plan")
+
+    def __repr__(self):
+        return f"<PricingPlan(id={self.id}, code='{self.code}')>"
+
+
 class MonitorCompany(Base):
     """
     招待制モニターベータの会社（テナント）単位。
 
-    月次クレジット上限はこの単位で管理する（ユーザー単位ではなく会社単位に絞る、
-    という設計判断は docs/MONITOR_BETA_OPERATION.md 参照）。プラン名・料金体系は
-    今回のスコープでは持たず、会社ごとに `monthly_credit_limit` を個別設定する
-    運用（Monitor運用専用）に留める。将来の商用プラン化はここに
-    `subscription_plan` 等を追加する形で拡張できる。
+    月次クレジット上限の実効値は「会社個別の上書き(monthly_credit_limit) >
+    紐づいたプラン(plan)の monthly_credit_limit > 既定のフォールバック値」の
+    優先順位で解決する（MonitorRepository.resolve_monthly_credit_limit参照）。
+    monthly_credit_limit を NULL にすると「個別上書きなし、プランに従う」を
+    表現できる。プランも紐付いていない会社は最後にフォールバック値を使う
+    （PR #91時点の挙動との後方互換のための保険）。
     """
 
     __tablename__ = "monitor_companies"
@@ -20,11 +60,14 @@ class MonitorCompany(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), nullable=False, unique=True, index=True)
-    monthly_credit_limit = Column(Integer, nullable=False, default=100)
+    plan_id = Column(Integer, ForeignKey("pricing_plans.id"), nullable=True, index=True)
+    # nullable化: NULLは「個別上書きなし、プラン(またはフォールバック)に従う」を意味する。
+    monthly_credit_limit = Column(Integer, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
+    plan = relationship("PricingPlan", back_populates="companies")
     users = relationship("MonitorUser", back_populates="company")
 
     def __repr__(self):

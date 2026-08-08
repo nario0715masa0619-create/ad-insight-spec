@@ -253,3 +253,27 @@ class TestMonthlyCreditQuota:
         success_response = _post_analyze(client, asset_id="asset_after_failure")
         assert success_response.status_code == 200
         assert MonitorRepository(db_session).sum_credits_used_this_month(company.id) == 1
+
+
+class TestPlanBasedQuotaIntegration:
+    """会社が個別上書きを持たず、プランに紐づいている場合でも /analyze の
+    クレジットチェックが正しくプランの上限を使うことのエンドツーエンド確認
+    （resolve_monthly_credit_limitの単体テストはtest_pricing_plans.py参照）。"""
+
+    def test_analyze_respects_plan_limit_when_no_override(self, db_session):
+        repo = MonitorRepository(db_session)
+        plan = repo.create_plan(code="growth-quota", name="Growth", monthly_credit_limit=1)
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=None, slug="plan-quota-co")
+        repo.update_company(company.id, plan_id=plan.id)
+        db_session.refresh(company)
+
+        client = _make_client(db_session, user)
+
+        first_response = _post_analyze(client, asset_id="asset_plan_quota_1")
+        assert first_response.status_code == 200
+
+        second_response = _post_analyze(client, asset_id="asset_plan_quota_2")
+        assert second_response.status_code == 403
+        body = second_response.json()["detail"]
+        assert body["error_code"] == "MONTHLY_CREDIT_LIMIT_EXCEEDED"
+        assert body["details"]["usage"]["limit"] == 1

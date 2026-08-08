@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,14 +28,46 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 class CompanyCreate(BaseModel):
     name: str
     slug: str = Field(..., description="URLセーフな英数字ID（例: acme）。一意制約あり")
-    monthly_credit_limit: int = Field(100, ge=1)
+    monthly_credit_limit: Optional[int] = Field(
+        None, ge=1, description="個別上書き。未指定ならplan_idのプラン、両方無ければ既定値にフォールバック"
+    )
+    plan_id: Optional[int] = Field(None, description="紐づけるプランのID（省略可）")
     notes: Optional[str] = None
 
 
 class CompanyUpdate(BaseModel):
-    monthly_credit_limit: Optional[int] = Field(None, ge=1)
+    monthly_credit_limit: Optional[int] = Field(None, ge=1, description="個別上書きを設定する")
+    clear_credit_limit_override: bool = Field(
+        False, description="trueの場合、個別上書きを解除してプラン/既定値に戻す（monthly_credit_limitより優先）"
+    )
+    plan_id: Optional[int] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
+
+
+class PlanCreate(BaseModel):
+    code: str = Field(..., description="一意な英数字コード（例: starter, growth, pro, monitor, enterprise）")
+    name: str
+    monthly_credit_limit: int = Field(..., ge=1)
+    monthly_price_jpy: Optional[int] = Field(None, ge=0, description="個別見積プラン等はNULL可")
+    marketing_note: Optional[str] = Field(None, description="例:「初期導入企業向けキャンペーン企画中」")
+    is_public: bool = True
+    display_order: int = 0
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
+
+
+class PlanUpdate(BaseModel):
+    name: Optional[str] = None
+    monthly_credit_limit: Optional[int] = Field(None, ge=1)
+    monthly_price_jpy: Optional[int] = Field(None, ge=0)
+    clear_monthly_price_jpy: bool = False
+    marketing_note: Optional[str] = None
+    is_public: Optional[bool] = None
+    display_order: Optional[int] = None
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
+    is_active: Optional[bool] = None
 
 
 class UserCreate(BaseModel):
@@ -53,13 +86,35 @@ class UserUpdate(BaseModel):
     display_name: Optional[str] = None
 
 
+def _plan_dict(plan) -> Dict[str, Any]:
+    return {
+        "id": plan.id,
+        "code": plan.code,
+        "name": plan.name,
+        "monthly_price_jpy": plan.monthly_price_jpy,
+        "monthly_credit_limit": plan.monthly_credit_limit,
+        "marketing_note": plan.marketing_note,
+        "is_public": plan.is_public,
+        "display_order": plan.display_order,
+        "effective_from": plan.effective_from.isoformat() if plan.effective_from else None,
+        "effective_to": plan.effective_to.isoformat() if plan.effective_to else None,
+        "is_active": plan.is_active,
+        "created_at": plan.created_at.isoformat(),
+    }
+
+
 def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
     usage = repo.get_usage_summary(company)
+    effective_plan = repo.get_effective_plan(company)
     return {
         "id": company.id,
         "name": company.name,
         "slug": company.slug,
+        # monthly_credit_limit: 個別上書きの生値（Noneならプラン/既定値任せ）。
+        # 実効値は usage_this_month.limit（= resolve_monthly_credit_limitの結果）を見る。
         "monthly_credit_limit": company.monthly_credit_limit,
+        "plan_id": company.plan_id,
+        "plan": _plan_dict(effective_plan) if effective_plan else None,
         "is_active": company.is_active,
         "notes": company.notes,
         "created_at": company.created_at.isoformat(),
@@ -96,11 +151,14 @@ async def create_company(
             status_code=409,
         )
         raise HTTPException(status_code=status_code, detail=error_response)
+    if payload.plan_id is not None and not repo.get_plan_by_id(payload.plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
 
     company = repo.create_company(
         name=payload.name,
         slug=payload.slug,
         monthly_credit_limit=payload.monthly_credit_limit,
+        plan_id=payload.plan_id,
         notes=payload.notes,
     )
     logger.info(f"Monitor company created: {company.slug}")
@@ -124,9 +182,14 @@ async def update_company(
     _admin: MonitorUser = Depends(require_admin),
 ) -> Dict[str, Any]:
     repo = MonitorRepository(db)
+    if payload.plan_id is not None and not repo.get_plan_by_id(payload.plan_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+
     company = repo.update_company(
         company_id,
         monthly_credit_limit=payload.monthly_credit_limit,
+        clear_credit_limit_override=payload.clear_credit_limit_override,
+        plan_id=payload.plan_id,
         is_active=payload.is_active,
         notes=payload.notes,
     )
@@ -134,6 +197,74 @@ async def update_company(
         raise HTTPException(status_code=404, detail="Company not found")
     logger.info(f"Monitor company updated: {company.slug}")
     return _company_dict(company, repo)
+
+
+# ===== Pricing Plans =====
+
+@router.post("/plans", response_model=Dict[str, Any])
+async def create_plan(
+    payload: PlanCreate,
+    db: Session = Depends(get_db),
+    _admin: MonitorUser = Depends(require_admin),
+) -> Dict[str, Any]:
+    repo = MonitorRepository(db)
+    if repo.get_plan_by_code(payload.code):
+        error_response, status_code = create_error_response(
+            error_message=f"code '{payload.code}' は既に使用されています。",
+            error_code="PLAN_CODE_TAKEN",
+            status_code=409,
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
+
+    plan = repo.create_plan(
+        code=payload.code,
+        name=payload.name,
+        monthly_credit_limit=payload.monthly_credit_limit,
+        monthly_price_jpy=payload.monthly_price_jpy,
+        marketing_note=payload.marketing_note,
+        is_public=payload.is_public,
+        display_order=payload.display_order,
+        effective_from=payload.effective_from,
+        effective_to=payload.effective_to,
+    )
+    logger.info(f"Pricing plan created: {plan.code}")
+    return _plan_dict(plan)
+
+
+@router.get("/plans", response_model=List[Dict[str, Any]])
+async def list_plans(
+    db: Session = Depends(get_db),
+    _admin: MonitorUser = Depends(require_admin),
+) -> List[Dict[str, Any]]:
+    repo = MonitorRepository(db)
+    return [_plan_dict(p) for p in repo.list_plans()]
+
+
+@router.patch("/plans/{plan_id}", response_model=Dict[str, Any])
+async def update_plan(
+    plan_id: int,
+    payload: PlanUpdate,
+    db: Session = Depends(get_db),
+    _admin: MonitorUser = Depends(require_admin),
+) -> Dict[str, Any]:
+    repo = MonitorRepository(db)
+    plan = repo.update_plan(
+        plan_id,
+        name=payload.name,
+        monthly_credit_limit=payload.monthly_credit_limit,
+        monthly_price_jpy=payload.monthly_price_jpy,
+        clear_monthly_price_jpy=payload.clear_monthly_price_jpy,
+        marketing_note=payload.marketing_note,
+        is_public=payload.is_public,
+        display_order=payload.display_order,
+        effective_from=payload.effective_from,
+        effective_to=payload.effective_to,
+        is_active=payload.is_active,
+    )
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    logger.info(f"Pricing plan updated: {plan.code}")
+    return _plan_dict(plan)
 
 
 # ===== Users =====

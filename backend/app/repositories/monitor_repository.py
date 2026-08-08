@@ -4,12 +4,17 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models import MonitorCompany, MonitorUser, MonitorSession, CreditUsageLog
+from app.models import MonitorCompany, MonitorUser, MonitorSession, CreditUsageLog, PricingPlan
 from app.core.security import hash_password, generate_session_token
 
 SESSION_TTL_HOURS = 24 * 14  # 2週間。モニターベータはブラウザの自動ログイン維持を
 # 優先し、頻繁な再ログインで離脱されるより長めに倒す（本格SaaSの厳格なセッション
 # 管理とは別の判断。docs/MONITOR_BETA_OPERATION.md参照）。
+
+# 会社に個別上書き(monthly_credit_limit)も紐づいたプランも無い場合の最終フォールバック。
+# PR #91（プラン概念導入前）のデフォルト値(100)と一致させ、プラン未設定の既存運用の
+# 挙動を変えない。resolve_monthly_credit_limit() 参照。
+DEFAULT_MONTHLY_CREDIT_LIMIT = 100
 
 
 def current_month_start(now: Optional[datetime] = None) -> datetime:
@@ -27,10 +32,26 @@ class MonitorRepository:
     # ===== Company =====
 
     def create_company(
-        self, name: str, slug: str, monthly_credit_limit: int = 100, notes: Optional[str] = None
+        self,
+        name: str,
+        slug: str,
+        monthly_credit_limit: Optional[int] = None,
+        plan_id: Optional[int] = None,
+        notes: Optional[str] = None,
     ) -> MonitorCompany:
+        """
+        monthly_credit_limit を省略(None)した場合、その会社は個別上書きを持たない
+        状態で作成される（plan_id が設定されていればそのプランの上限に従い、
+        どちらも無ければ DEFAULT_MONTHLY_CREDIT_LIMIT にフォールバックする。
+        resolve_monthly_credit_limit() 参照）。
+        """
         company = MonitorCompany(
-            name=name, slug=slug, monthly_credit_limit=monthly_credit_limit, notes=notes, is_active=True
+            name=name,
+            slug=slug,
+            monthly_credit_limit=monthly_credit_limit,
+            plan_id=plan_id,
+            notes=notes,
+            is_active=True,
         )
         self.db.add(company)
         self.db.commit()
@@ -50,14 +71,26 @@ class MonitorRepository:
         self,
         company_id: int,
         monthly_credit_limit: Optional[int] = None,
+        clear_credit_limit_override: bool = False,
+        plan_id: Optional[int] = None,
         is_active: Optional[bool] = None,
         notes: Optional[str] = None,
     ) -> Optional[MonitorCompany]:
+        """
+        monthly_credit_limit を指定すると個別上書きを設定する。
+        clear_credit_limit_override=True の場合は上書きを解除（NULLに戻す）し、
+        以後はプラン（またはフォールバック）に従う。両方同時指定時は
+        clear が優先される（上書きしてから消す、ではなく「今回は消す」を優先）。
+        """
         company = self.get_company_by_id(company_id)
         if not company:
             return None
-        if monthly_credit_limit is not None:
+        if clear_credit_limit_override:
+            company.monthly_credit_limit = None
+        elif monthly_credit_limit is not None:
             company.monthly_credit_limit = monthly_credit_limit
+        if plan_id is not None:
+            company.plan_id = plan_id
         if is_active is not None:
             company.is_active = is_active
         if notes is not None:
@@ -65,6 +98,119 @@ class MonitorRepository:
         self.db.commit()
         self.db.refresh(company)
         return company
+
+    # ===== Pricing Plan =====
+
+    def create_plan(
+        self,
+        code: str,
+        name: str,
+        monthly_credit_limit: int,
+        monthly_price_jpy: Optional[int] = None,
+        marketing_note: Optional[str] = None,
+        is_public: bool = True,
+        display_order: int = 0,
+        effective_from: Optional[datetime] = None,
+        effective_to: Optional[datetime] = None,
+    ) -> PricingPlan:
+        plan = PricingPlan(
+            code=code,
+            name=name,
+            monthly_credit_limit=monthly_credit_limit,
+            monthly_price_jpy=monthly_price_jpy,
+            marketing_note=marketing_note,
+            is_public=is_public,
+            display_order=display_order,
+            effective_from=effective_from,
+            effective_to=effective_to,
+            is_active=True,
+        )
+        self.db.add(plan)
+        self.db.commit()
+        self.db.refresh(plan)
+        return plan
+
+    def get_plan_by_id(self, plan_id: int) -> Optional[PricingPlan]:
+        return self.db.query(PricingPlan).filter(PricingPlan.id == plan_id).first()
+
+    def get_plan_by_code(self, code: str) -> Optional[PricingPlan]:
+        return self.db.query(PricingPlan).filter(PricingPlan.code == code).first()
+
+    def list_plans(self, public_only: bool = False) -> List[PricingPlan]:
+        query = self.db.query(PricingPlan)
+        if public_only:
+            query = query.filter(PricingPlan.is_public == True)  # noqa: E712
+        return query.order_by(PricingPlan.display_order, PricingPlan.id).all()
+
+    def update_plan(
+        self,
+        plan_id: int,
+        name: Optional[str] = None,
+        monthly_credit_limit: Optional[int] = None,
+        monthly_price_jpy: Optional[int] = None,
+        clear_monthly_price_jpy: bool = False,
+        marketing_note: Optional[str] = None,
+        is_public: Optional[bool] = None,
+        display_order: Optional[int] = None,
+        effective_from: Optional[datetime] = None,
+        effective_to: Optional[datetime] = None,
+        is_active: Optional[bool] = None,
+    ) -> Optional[PricingPlan]:
+        plan = self.get_plan_by_id(plan_id)
+        if not plan:
+            return None
+        if name is not None:
+            plan.name = name
+        if monthly_credit_limit is not None:
+            plan.monthly_credit_limit = monthly_credit_limit
+        if clear_monthly_price_jpy:
+            plan.monthly_price_jpy = None
+        elif monthly_price_jpy is not None:
+            plan.monthly_price_jpy = monthly_price_jpy
+        if marketing_note is not None:
+            plan.marketing_note = marketing_note
+        if is_public is not None:
+            plan.is_public = is_public
+        if display_order is not None:
+            plan.display_order = display_order
+        if effective_from is not None:
+            plan.effective_from = effective_from
+        if effective_to is not None:
+            plan.effective_to = effective_to
+        if is_active is not None:
+            plan.is_active = is_active
+        self.db.commit()
+        self.db.refresh(plan)
+        return plan
+
+    def get_effective_plan(self, company: MonitorCompany, now: Optional[datetime] = None) -> Optional[PricingPlan]:
+        """
+        company に紐づくプランが「現時点で有効」なら返す。無効・期間外・
+        プラン未紐付けの場合は None（呼び出し側はフォールバックへ進む）。
+        """
+        if not company.plan_id:
+            return None
+        plan = self.get_plan_by_id(company.plan_id)
+        if not plan or not plan.is_active:
+            return None
+        now = now or datetime.utcnow()
+        if plan.effective_from and now < plan.effective_from:
+            return None
+        if plan.effective_to and now >= plan.effective_to:
+            return None
+        return plan
+
+    def resolve_monthly_credit_limit(self, company: MonitorCompany, now: Optional[datetime] = None) -> int:
+        """
+        実効クレジット上限を「会社個別の上書き > 紐づいたプラン > フォールバック」
+        の優先順位で解決する。
+        """
+        if company.monthly_credit_limit is not None:
+            return company.monthly_credit_limit
+        plan = self.get_effective_plan(company, now=now)
+        if plan is not None:
+            return plan.monthly_credit_limit
+        return DEFAULT_MONTHLY_CREDIT_LIMIT
 
     # ===== User =====
 
@@ -198,7 +344,7 @@ class MonitorRepository:
 
     def get_usage_summary(self, company: MonitorCompany, now: Optional[datetime] = None) -> dict:
         used = self.sum_credits_used_this_month(company.id, now=now)
-        limit = company.monthly_credit_limit
+        limit = self.resolve_monthly_credit_limit(company, now=now)
         return {
             "used": used,
             "limit": limit,
@@ -207,6 +353,7 @@ class MonitorRepository:
         }
 
     def has_sufficient_credits(self, company: MonitorCompany, credit_cost: int, now: Optional[datetime] = None) -> bool:
-        """`used + credit_cost <= monthly_credit_limit` を満たすかどうか。"""
+        """`used + credit_cost <= 実効monthly_credit_limit` を満たすかどうか。"""
         used = self.sum_credits_used_this_month(company.id, now=now)
-        return used + credit_cost <= company.monthly_credit_limit
+        limit = self.resolve_monthly_credit_limit(company, now=now)
+        return used + credit_cost <= limit
