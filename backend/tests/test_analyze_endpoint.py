@@ -52,8 +52,8 @@ def db_session():
 def test_user(db_session):
     """招待制モニターベータ導入により /analyze 等はログイン必須になったため、
     テスト用の会社・ユーザーを1件用意し、get_current_user を差し替える。
-    monthly_analysis_limit は十分大きくして、既存テストが上限に引っかからないようにする。"""
-    company = MonitorCompany(name="Test Co", slug="test-co", monthly_analysis_limit=100000, is_active=True)
+    monthly_credit_limit は十分大きくして、既存テストが上限に引っかからないようにする。"""
+    company = MonitorCompany(name="Test Co", slug="test-co", monthly_credit_limit=100000, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)

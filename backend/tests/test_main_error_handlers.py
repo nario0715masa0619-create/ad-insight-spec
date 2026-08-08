@@ -51,7 +51,7 @@ def client(db_session):
     # 招待制モニターベータ導入により /api/v1/specs・/api/v1/verification は
     # ログイン必須になったため、テスト用の会社・ユーザーを1件用意して
     # get_current_user を差し替える。
-    company = MonitorCompany(name="Test Co", slug="test-co", monthly_analysis_limit=100000, is_active=True)
+    company = MonitorCompany(name="Test Co", slug="test-co", monthly_credit_limit=100000, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)

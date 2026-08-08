@@ -48,7 +48,7 @@ def db_session():
 def test_user(db_session):
     """招待制モニターベータ導入により verification API 全体がログイン必須になったため、
     テスト用の会社・ユーザーを1件用意し、get_current_user を差し替える。"""
-    company = MonitorCompany(name="Test Co", slug="test-co", monthly_analysis_limit=100000, is_active=True)
+    company = MonitorCompany(name="Test Co", slug="test-co", monthly_credit_limit=100000, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)

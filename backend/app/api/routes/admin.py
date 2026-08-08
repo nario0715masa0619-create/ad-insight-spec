@@ -27,12 +27,12 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 class CompanyCreate(BaseModel):
     name: str
     slug: str = Field(..., description="URLセーフな英数字ID（例: acme）。一意制約あり")
-    monthly_analysis_limit: int = Field(50, ge=1)
+    monthly_credit_limit: int = Field(100, ge=1)
     notes: Optional[str] = None
 
 
 class CompanyUpdate(BaseModel):
-    monthly_analysis_limit: Optional[int] = Field(None, ge=1)
+    monthly_credit_limit: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -59,7 +59,7 @@ def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
         "id": company.id,
         "name": company.name,
         "slug": company.slug,
-        "monthly_analysis_limit": company.monthly_analysis_limit,
+        "monthly_credit_limit": company.monthly_credit_limit,
         "is_active": company.is_active,
         "notes": company.notes,
         "created_at": company.created_at.isoformat(),
@@ -100,7 +100,7 @@ async def create_company(
     company = repo.create_company(
         name=payload.name,
         slug=payload.slug,
-        monthly_analysis_limit=payload.monthly_analysis_limit,
+        monthly_credit_limit=payload.monthly_credit_limit,
         notes=payload.notes,
     )
     logger.info(f"Monitor company created: {company.slug}")
@@ -126,7 +126,7 @@ async def update_company(
     repo = MonitorRepository(db)
     company = repo.update_company(
         company_id,
-        monthly_analysis_limit=payload.monthly_analysis_limit,
+        monthly_credit_limit=payload.monthly_credit_limit,
         is_active=payload.is_active,
         notes=payload.notes,
     )

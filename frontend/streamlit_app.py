@@ -73,7 +73,7 @@ def render_login_gate() -> bool:
 
 
 def refresh_auth_usage():
-    """分析実行直後などに、サイドバーの「今月の利用数/残数」表示を最新化する。
+    """分析実行直後などに、サイドバーの「今月のクレジット利用/残数」表示を最新化する。
     失敗しても静かに諦める（表示が一拍古いままになるだけで、機能自体は継続する）。"""
     try:
         response = api_session.get(f"{AUTH_API_BASE_URL}/me", timeout=10)
@@ -97,13 +97,13 @@ def _render_sidebar_status():
         st.caption(user.get("email", ""))
         if usage:
             st.metric(
-                "今月の分析利用数",
-                f"{usage.get('used', 0)} / {usage.get('limit', 0)}",
-                delta=f"残り{usage.get('remaining', 0)}回",
+                "今月のクレジット利用",
+                f"{usage.get('used', 0)} / {usage.get('limit', 0)} credits",
+                delta=f"残り{usage.get('remaining', 0)}クレジット",
                 delta_color="off",
             )
             if usage.get("limit_reached"):
-                st.error("⚠️ 今月の上限に達しています。上限は毎月1日にリセットされます。追加が必要な場合は管理者にお問い合わせください。")
+                st.error("⚠️ 今月のクレジットを使い切りました。上限は毎月1日にリセットされます。追加が必要な場合は管理者にお問い合わせください。")
         if st.button("ログアウト", key="logout_button"):
             try:
                 api_session.post(f"{AUTH_API_BASE_URL}/logout", timeout=10)
@@ -1276,7 +1276,7 @@ if not render_login_gate():
 with st.expander("🧪 モニターベータ版のご利用にあたって", expanded=False):
     st.markdown(
         "- 本サービスは**招待制のモニターベータ版**です。一般公開・自由登録は行っていません。\n"
-        "- 会社ごとに**月間の分析実行回数の上限**があります。上限は毎月1日にリセットされます。\n"
+        "- 会社ごとに**月間クレジットの上限**があります（分析内容に応じて1〜3クレジット消費）。上限は毎月1日にリセットされます。\n"
         "- ベータ版のため、**機能・画面・分析ロジックは予告なく変更**される場合があります。\n"
         "- 気づいた不具合やご意見は、ぜひ担当者までフィードバックとしてお寄せください。\n"
         "- アップロードいただく広告クリエイティブ・LP・KPIデータは分析目的にのみ利用します。取り扱いにご不安がある場合は事前にご相談ください。\n"
@@ -1306,6 +1306,15 @@ with tab_new:
         "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPI情報（Meta Ads CSV または JSON）",
     }
     st.caption(f"ℹ️ {mode_requirements[mode]}")
+
+    # 実際の消費クレジットはサーバー側の設定値が正だが、実行前に目安を示す。
+    # モード⇔クレジット段階の対応は backend/app/services/credit_pricing.py と揃えている。
+    mode_credit_hint = {
+        "file_only": "この分析では通常 **1クレジット** を消費します",
+        "file_plus_lp": "この分析では通常 **2クレジット** を消費します（LP分析を含むため）",
+        "file_plus_lp_plus_manual_kpi": "この分析では通常 **3クレジット** を消費します（LP分析 + KPI分析を含むため）",
+    }
+    st.caption(f"💳 {mode_credit_hint[mode]}")
 
     asset_name_input = st.text_input(
         "広告名/キャンペーン名（任意・未入力時はアップロードファイル名を使用）",
@@ -1398,7 +1407,7 @@ with tab_new:
                 # ページリロード等でセッションが失われても復元できるよう、
                 # URLにも同じ asset_id/version を残しておく。
                 set_analysis_result_query_params(result_id, result_version)
-                # 今月の利用数が1件増えたはずなので、サイドバーの残数表示を最新化する。
+                # クレジットが消費されたはずなので、サイドバーの残数表示を最新化する。
                 refresh_auth_usage()
             else:
                 try:
@@ -1409,11 +1418,11 @@ with tab_new:
                 st.session_state["analysis_result"] = None
                 clear_analysis_result_query_params()
 
-                if err_json and err_json.get("error_code") == "MONTHLY_LIMIT_EXCEEDED":
-                    st.error(f"🚫 {err_json.get('error', '今月の分析上限に達しました。')}")
+                if err_json and err_json.get("error_code") == "MONTHLY_CREDIT_LIMIT_EXCEEDED":
+                    st.error(f"🚫 {err_json.get('error', '今月のクレジット残量が不足しています。')}")
                     usage = (err_json.get("details") or {}).get("usage") or {}
                     if usage:
-                        st.caption(f"今月の利用: {usage.get('used')} / {usage.get('limit')} 回")
+                        st.caption(f"今月のクレジット利用: {usage.get('used')} / {usage.get('limit')} credits")
                 elif err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
                     st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
                     st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")

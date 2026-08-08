@@ -54,7 +54,7 @@ def _make_client(db_session, user):
 
 @pytest.fixture
 def seed_company_and_users(db_session):
-    company = MonitorCompany(name="Seed Co", slug="seed-co", monthly_analysis_limit=50, is_active=True)
+    company = MonitorCompany(name="Seed Co", slug="seed-co", monthly_credit_limit=50, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)
@@ -90,12 +90,12 @@ class TestCompanyManagement:
     def test_admin_can_create_company(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
         response = client.post(
-            "/api/v1/admin/companies", json={"name": "Acme Inc", "slug": "acme", "monthly_analysis_limit": 30}
+            "/api/v1/admin/companies", json={"name": "Acme Inc", "slug": "acme", "monthly_credit_limit": 30}
         )
         assert response.status_code == 200
         body = response.json()
         assert body["slug"] == "acme"
-        assert body["monthly_analysis_limit"] == 30
+        assert body["monthly_credit_limit"] == 30
         assert body["usage_this_month"] == {"used": 0, "limit": 30, "remaining": 30, "limit_reached": False}
 
     def test_create_company_duplicate_slug_returns_conflict(self, db_session, seed_company_and_users):
@@ -109,9 +109,9 @@ class TestCompanyManagement:
     def test_admin_can_update_company_limit(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
         company_id = seed_company_and_users["company"].id
-        response = client.patch(f"/api/v1/admin/companies/{company_id}", json={"monthly_analysis_limit": 100})
+        response = client.patch(f"/api/v1/admin/companies/{company_id}", json={"monthly_credit_limit": 100})
         assert response.status_code == 200
-        assert response.json()["monthly_analysis_limit"] == 100
+        assert response.json()["monthly_credit_limit"] == 100
 
     def test_admin_can_deactivate_company(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
@@ -122,7 +122,7 @@ class TestCompanyManagement:
 
     def test_update_nonexistent_company_returns_404(self, db_session, seed_company_and_users):
         client = _make_client(db_session, seed_company_and_users["admin_user"])
-        response = client.patch("/api/v1/admin/companies/999999", json={"monthly_analysis_limit": 10})
+        response = client.patch("/api/v1/admin/companies/999999", json={"monthly_credit_limit": 10})
         assert response.status_code == 404
 
 

@@ -9,10 +9,10 @@
 PYTHONPATH を通して実行されることを前提とする（他の scripts/ 配下のスクリプトと同様）。
 実行例:
   cd backend
-  python ../scripts/manage_monitor_accounts.py create-company --name "Acme Inc" --slug acme --limit 50
+  python ../scripts/manage_monitor_accounts.py create-company --name "Acme Inc" --slug acme --limit 100
   python ../scripts/manage_monitor_accounts.py create-user --company-slug acme --email user@acme.example --admin
   python ../scripts/manage_monitor_accounts.py list-usage
-  python ../scripts/manage_monitor_accounts.py set-limit --company-slug acme --limit 100
+  python ../scripts/manage_monitor_accounts.py set-limit --company-slug acme --limit 200
   python ../scripts/manage_monitor_accounts.py deactivate-user --email user@acme.example
   python ../scripts/manage_monitor_accounts.py reset-password --email user@acme.example
 """
@@ -42,8 +42,8 @@ def cmd_create_company(args: argparse.Namespace) -> None:
         if repo.get_company_by_slug(args.slug):
             print(f"Error: slug '{args.slug}' already exists.", file=sys.stderr)
             sys.exit(1)
-        company = repo.create_company(name=args.name, slug=args.slug, monthly_analysis_limit=args.limit)
-        print(f"Created company: id={company.id} slug={company.slug} monthly_limit={company.monthly_analysis_limit}")
+        company = repo.create_company(name=args.name, slug=args.slug, monthly_credit_limit=args.limit)
+        print(f"Created company: id={company.id} slug={company.slug} monthly_credit_limit={company.monthly_credit_limit}")
     finally:
         db.close()
 
@@ -84,8 +84,8 @@ def cmd_set_limit(args: argparse.Namespace) -> None:
         if not company:
             print(f"Error: company slug '{args.company_slug}' not found.", file=sys.stderr)
             sys.exit(1)
-        updated = repo.update_company(company.id, monthly_analysis_limit=args.limit)
-        print(f"Updated {updated.slug}: monthly_analysis_limit={updated.monthly_analysis_limit}")
+        updated = repo.update_company(company.id, monthly_credit_limit=args.limit)
+        print(f"Updated {updated.slug}: monthly_credit_limit={updated.monthly_credit_limit}")
     finally:
         db.close()
 
@@ -159,7 +159,7 @@ def cmd_list_usage(args: argparse.Namespace) -> None:
         if not companies:
             print("No monitor companies registered yet.")
             return
-        print(f"{'slug':<20} {'name':<24} {'active':<8} {'used/limit':<12} {'remaining':<10}")
+        print(f"{'slug':<20} {'name':<24} {'active':<8} {'used/limit(credits)':<20} {'remaining':<10}")
         for company in companies:
             usage = repo.get_usage_summary(company)
             print(
@@ -177,7 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("create-company", help="Register a new monitor company")
     p.add_argument("--name", required=True)
     p.add_argument("--slug", required=True)
-    p.add_argument("--limit", type=int, default=50, help="Monthly analysis limit (default: 50)")
+    p.add_argument("--limit", type=int, default=100, help="Monthly credit limit (default: 100)")
     p.set_defaults(func=cmd_create_company)
 
     p = sub.add_parser("create-user", help="Invite a new monitor user into a company")
@@ -188,7 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--admin", action="store_true", help="Grant admin privileges to this user")
     p.set_defaults(func=cmd_create_user)
 
-    p = sub.add_parser("set-limit", help="Change a company's monthly analysis limit")
+    p = sub.add_parser("set-limit", help="Change a company's monthly credit limit")
     p.add_argument("--company-slug", required=True)
     p.add_argument("--limit", type=int, required=True)
     p.set_defaults(func=cmd_set_limit)

@@ -1,6 +1,6 @@
 from .ad_insight import AdInsight
 from .verification import VerificationCase, VerificationSuggestionEvaluation, VerificationFollowup
-from .beta_access import MonitorCompany, MonitorUser, MonitorSession
+from .beta_access import MonitorCompany, MonitorUser, MonitorSession, CreditUsageLog
 
 __all__ = [
     "AdInsight",
@@ -10,4 +10,5 @@ __all__ = [
     "MonitorCompany",
     "MonitorUser",
     "MonitorSession",
+    "CreditUsageLog",
 ]

@@ -51,7 +51,7 @@ def client(db_session):
 
 @pytest.fixture
 def active_company(db_session):
-    company = MonitorCompany(name="Acme Inc", slug="acme", monthly_analysis_limit=10, is_active=True)
+    company = MonitorCompany(name="Acme Inc", slug="acme", monthly_credit_limit=10, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)

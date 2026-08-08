@@ -1,9 +1,11 @@
 """
-招待制モニターベータの月間分析上限（会社単位・毎月1日リセット）のテスト。
+招待制モニターベータの月次クレジット上限（会社単位・毎月1日リセット・
+「実行前チェック→成功時のみ消費確定」方式）のテスト。
 
 specs.router のみをマウントした最小のFastAPIアプリ + インメモリSQLiteで検証する
 （test_analyze_endpoint.pyのパターンを踏襲）。AnalysisOrchestrator.run()は
-実I/Oを伴うためモックし、/analyze の上限チェックロジック自体のみを検証する。
+実I/Oを伴うためモックし、/analyze のクレジットチェック・消費ロジック自体のみを
+検証する。
 """
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -17,10 +19,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import MonitorCompany, MonitorUser
-from app.models.ad_insight import AdInsight
+from app.models import MonitorCompany, MonitorUser, CreditUsageLog
 from app.api.deps import get_current_user
 from app.api.routes import specs as specs_module
+from app.repositories import MonitorRepository
 
 engine = create_engine(
     "sqlite:///:memory:",
@@ -57,8 +59,8 @@ def _make_client(db_session, user):
     return TestClient(app)
 
 
-def _make_company_and_user(db_session, monthly_analysis_limit, slug="quota-co"):
-    company = MonitorCompany(name="Quota Co", slug=slug, monthly_analysis_limit=monthly_analysis_limit, is_active=True)
+def _make_company_and_user(db_session, monthly_credit_limit, slug="quota-co"):
+    company = MonitorCompany(name="Quota Co", slug=slug, monthly_credit_limit=monthly_credit_limit, is_active=True)
     db_session.add(company)
     db_session.commit()
     db_session.refresh(company)
@@ -99,37 +101,59 @@ def _minimal_valid_spec_dict(asset_id):
     }
 
 
-def _post_analyze(client, asset_id="asset_quota_test"):
+def _post_analyze(client, asset_id="asset_quota_test", mode="file_only", raise_error=None):
     spec_dict = _minimal_valid_spec_dict(asset_id)
-    with patch.object(specs_module.AnalysisOrchestrator, "run", return_value=spec_dict):
+    with patch.object(
+        specs_module.AnalysisOrchestrator,
+        "run",
+        side_effect=raise_error,
+        return_value=None if raise_error else spec_dict,
+    ):
         return client.post(
             "/api/v1/specs/analyze",
             files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
-            data={"mode": "file_only"},
+            data={"mode": mode},
         )
 
 
-class TestMonthlyQuota:
+class TestCreditConsumptionByMode:
+    """分析タイプごとのクレジット消費（Light=1 / Standard=2 / Heavy=3）"""
+
+    @pytest.mark.parametrize(
+        "mode,expected_cost",
+        [
+            ("file_only", 1),
+            ("file_plus_lp", 2),
+            ("file_plus_lp_plus_manual_kpi", 3),
+        ],
+    )
+    def test_successful_analysis_consumes_expected_credits(self, db_session, mode, expected_cost):
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=10, slug=f"tier-{mode}")
+        client = _make_client(db_session, user)
+
+        response = _post_analyze(client, asset_id=f"asset_{mode}", mode=mode)
+        assert response.status_code == 200
+
+        used = MonitorRepository(db_session).sum_credits_used_this_month(company.id)
+        assert used == expected_cost
+
+
+class TestMonthlyCreditQuota:
     def test_analyze_allowed_when_under_limit(self, db_session):
-        company, user = _make_company_and_user(db_session, monthly_analysis_limit=2)
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=2)
         client = _make_client(db_session, user)
 
         response = _post_analyze(client, asset_id="asset_under_limit")
         assert response.status_code == 200
 
-    def test_analyze_blocked_when_limit_reached(self, db_session):
-        company, user = _make_company_and_user(db_session, monthly_analysis_limit=2, slug="quota-blocked")
-        # 上限(2件)まで既に使い切っている状態を直接DBに作る
-        for i in range(2):
-            db_session.add(
-                AdInsight(
-                    asset_id=f"asset_existing_{i}",
-                    version=1,
-                    format="image_static",
-                    spec_data={},
-                    company_id=company.id,
-                )
+    def test_analyze_blocked_when_credits_already_exhausted(self, db_session):
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=2, slug="quota-blocked")
+        # 上限(2クレジット)まで既に消費済みの状態を直接DBに作る
+        db_session.add(
+            CreditUsageLog(
+                company_id=company.id, user_id=user.id, credit_cost=2, analysis_type="file_only"
             )
+        )
         db_session.commit()
 
         client = _make_client(db_session, user)
@@ -146,23 +170,48 @@ class TestMonthlyQuota:
         # bareなFastAPI()にrouterだけをマウントしているため detail の下に入る
         # （test_analyze_endpoint.pyのMetaAdsCsvErrorテストと同じ事情）。
         body = response.json()["detail"]
-        assert body["error_code"] == "MONTHLY_LIMIT_EXCEEDED"
+        assert body["error_code"] == "MONTHLY_CREDIT_LIMIT_EXCEEDED"
         assert body["details"]["usage"] == {"used": 2, "limit": 2, "remaining": 0, "limit_reached": True}
+        assert body["details"]["required_credits"] == 1
+
+    def test_analyze_blocked_when_remaining_credits_below_required_cost(self, db_session):
+        """残量はあるが、このモードが必要とするクレジット数には満たない場合も
+        ブロックされること（used=0でも limit_reached=False になり得るケース）。"""
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=2, slug="quota-insufficient")
+        db_session.add(
+            CreditUsageLog(
+                company_id=company.id, user_id=user.id, credit_cost=1, analysis_type="file_only"
+            )
+        )
+        db_session.commit()  # used=1, limit=2 -> remaining=1, limit_reached=False だが heavy(3)は足りない
+
+        client = _make_client(db_session, user)
+        with patch.object(specs_module.AnalysisOrchestrator, "run") as mock_run:
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp_plus_manual_kpi"},
+            )
+            mock_run.assert_not_called()
+
+        assert response.status_code == 403
+        body = response.json()["detail"]
+        assert body["details"]["usage"]["limit_reached"] is False
+        assert body["details"]["required_credits"] == 3
 
     def test_quota_resets_at_month_boundary(self, db_session):
-        """前月分の分析は当月のカウントに含まれず、毎月1日にリセットされたのと
+        """前月分のクレジット消費は当月の集計に含まれず、毎月1日にリセットされたのと
         同じ挙動になること（実装は「当月1日以降」を都度集計するのみで、
         別途リセット処理は走らない設計）。"""
-        company, user = _make_company_and_user(db_session, monthly_analysis_limit=1, slug="quota-reset")
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=1, slug="quota-reset")
 
         last_month = datetime.utcnow().replace(day=1) - timedelta(days=1)
         db_session.add(
-            AdInsight(
-                asset_id="asset_from_last_month",
-                version=1,
-                format="image_static",
-                spec_data={},
+            CreditUsageLog(
                 company_id=company.id,
+                user_id=user.id,
+                credit_cost=1,
+                analysis_type="file_only",
                 created_at=last_month,
             )
         )
@@ -172,27 +221,35 @@ class TestMonthlyQuota:
         response = _post_analyze(client, asset_id="asset_this_month")
         assert response.status_code == 200
 
-    def test_deleted_analyses_still_count_towards_quota(self, db_session):
-        """論理削除しても当月の実施実績は消えない（削除して上限を回避できない）"""
-        company, user = _make_company_and_user(db_session, monthly_analysis_limit=1, slug="quota-deleted")
-        db_session.add(
-            AdInsight(
-                asset_id="asset_deleted",
-                version=1,
-                format="image_static",
-                spec_data={},
-                company_id=company.id,
-                is_deleted=True,
-            )
-        )
-        db_session.commit()
-
+    def test_deleting_analysis_does_not_refund_credits(self, db_session):
+        """論理削除しても消費済みクレジットは戻らない
+        （credit_usage_logs は ad_insights.is_deleted と独立しているため）"""
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=1, slug="quota-no-refund")
         client = _make_client(db_session, user)
-        with patch.object(specs_module.AnalysisOrchestrator, "run") as mock_run:
-            response = client.post(
-                "/api/v1/specs/analyze",
-                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
-                data={"mode": "file_only"},
-            )
-            mock_run.assert_not_called()
-        assert response.status_code == 403
+
+        response = _post_analyze(client, asset_id="asset_to_delete")
+        assert response.status_code == 200
+
+        delete_response = client.delete("/api/v1/specs/asset_to_delete")
+        assert delete_response.status_code == 200
+
+        # 削除後も当月の消費量は減らないため、上限(1)に達したままブロックされる
+        second_response = _post_analyze(client, asset_id="asset_after_delete")
+        assert second_response.status_code == 403
+
+    def test_failed_analysis_does_not_consume_credits(self, db_session):
+        """AnalysisOrchestrator.run() が例外を送出した場合、クレジットは
+        一切消費されないこと（予約状態を持たず、成功時のみ消費確定する設計）。"""
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=5, slug="quota-fail-no-consume")
+        client = _make_client(db_session, user)
+
+        response = _post_analyze(client, asset_id="asset_will_fail", raise_error=RuntimeError("boom"))
+        assert response.status_code == 500
+
+        used = MonitorRepository(db_session).sum_credits_used_this_month(company.id)
+        assert used == 0
+
+        # 消費されていないので、直後の正常な分析は引き続き実行できる
+        success_response = _post_analyze(client, asset_id="asset_after_failure")
+        assert success_response.status_code == 200
+        assert MonitorRepository(db_session).sum_credits_used_this_month(company.id) == 1

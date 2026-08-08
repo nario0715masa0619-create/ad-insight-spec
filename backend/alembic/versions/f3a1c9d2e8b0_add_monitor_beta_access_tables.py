@@ -21,6 +21,15 @@ so existing analyses funnel through the same table without a backfill;
 existing rows keep company_id=NULL, which simply means no beta company will
 see them in their scoped list (no data loss, just correctly excluded from a
 scope that didn't exist yet).
+
+Also adds `credit_usage_logs` and renames `monitor_companies.monthly_analysis_limit`
+to `monthly_credit_limit`: the monthly quota moved from "N analyses" to "N credits",
+with each analysis mode costing 1/2/3 credits (see app/services/credit_pricing.py).
+Usage is computed by summing credit_usage_logs rows for the current month rather
+than maintaining a running counter, the same pattern already used for AdInsight-based
+counting, so there's no separate aggregate to keep in sync. This migration is still
+unreleased (no production deploy has applied it yet), so the rename is folded into
+the same revision instead of adding a follow-up one.
 """
 from typing import Sequence, Union
 
@@ -42,7 +51,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('name', sa.String(length=200), nullable=False),
         sa.Column('slug', sa.String(length=100), nullable=False),
-        sa.Column('monthly_analysis_limit', sa.Integer(), nullable=False),
+        sa.Column('monthly_credit_limit', sa.Integer(), nullable=False),
         sa.Column('is_active', sa.Boolean(), nullable=False),
         sa.Column('notes', sa.Text(), nullable=True),
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
@@ -94,9 +103,32 @@ def upgrade() -> None:
         )
     op.create_index(op.f('ix_ad_insights_company_id'), 'ad_insights', ['company_id'], unique=False)
 
+    op.create_table(
+        'credit_usage_logs',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('company_id', sa.Integer(), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.String(length=100), nullable=True),
+        sa.Column('asset_version', sa.Integer(), nullable=True),
+        sa.Column('credit_cost', sa.Integer(), nullable=False),
+        sa.Column('analysis_type', sa.String(length=50), nullable=False),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+        sa.ForeignKeyConstraint(['company_id'], ['monitor_companies.id']),
+        sa.ForeignKeyConstraint(['user_id'], ['monitor_users.id']),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_credit_usage_logs_company_id'), 'credit_usage_logs', ['company_id'], unique=False)
+    op.create_index(op.f('ix_credit_usage_logs_asset_id'), 'credit_usage_logs', ['asset_id'], unique=False)
+    op.create_index(op.f('ix_credit_usage_logs_created_at'), 'credit_usage_logs', ['created_at'], unique=False)
+
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.drop_index(op.f('ix_credit_usage_logs_created_at'), table_name='credit_usage_logs')
+    op.drop_index(op.f('ix_credit_usage_logs_asset_id'), table_name='credit_usage_logs')
+    op.drop_index(op.f('ix_credit_usage_logs_company_id'), table_name='credit_usage_logs')
+    op.drop_table('credit_usage_logs')
+
     op.drop_index(op.f('ix_ad_insights_company_id'), table_name='ad_insights')
     with op.batch_alter_table('ad_insights') as batch_op:
         batch_op.drop_constraint('fk_ad_insights_created_by_user_id', type_='foreignkey')

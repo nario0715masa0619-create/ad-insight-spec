@@ -55,8 +55,8 @@ def _make_client(db_session, user):
 
 @pytest.fixture
 def two_companies(db_session):
-    company_a = MonitorCompany(name="Company A", slug="company-a", monthly_analysis_limit=100, is_active=True)
-    company_b = MonitorCompany(name="Company B", slug="company-b", monthly_analysis_limit=100, is_active=True)
+    company_a = MonitorCompany(name="Company A", slug="company-a", monthly_credit_limit=100, is_active=True)
+    company_b = MonitorCompany(name="Company B", slug="company-b", monthly_credit_limit=100, is_active=True)
     db_session.add_all([company_a, company_b])
     db_session.commit()
     db_session.refresh(company_a)

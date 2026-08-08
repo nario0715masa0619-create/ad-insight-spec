@@ -15,6 +15,7 @@ from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
 from app.services.asset_evaluation_adapter import resolve_spec_data
 from app.services.meta_ads_csv_service import MetaAdsCsvError
+from app.services.credit_pricing import credit_cost_for_mode
 from app.api.deps import get_current_user
 
 from app.utils.error_handler import create_error_response, ErrorResponse
@@ -133,21 +134,29 @@ async def analyze(
     **エラー**:
     - 400: 入力ファイル形式エラー
     - 401: 未ログイン/セッション無効
-    - 403: 当月の分析上限に到達
+    - 403: 当月のクレジット上限に到達（この分析に必要なクレジットが残量を超える）
     - 500: 分析エラー
+
+    **クレジット消費について**:
+    分析モードに応じて 1〜3 クレジットを消費する（`app/services/credit_pricing.py`）。
+    「実行前チェック→成功時のみ消費確定」方式のため、分析が失敗した場合は
+    クレジットを消費しない（予約状態は持たず、成功時に初めて`credit_usage_logs`へ
+    記録することで実現している）。
     """
     monitor_repo = MonitorRepository(db)
     company = monitor_repo.get_company_by_id(current_user.company_id)
-    usage = monitor_repo.get_usage_summary(company)
-    if usage["limit_reached"]:
+    credit_cost = credit_cost_for_mode(mode)
+    if not monitor_repo.has_sufficient_credits(company, credit_cost):
+        usage = monitor_repo.get_usage_summary(company)
         error_response, status_code = create_error_response(
             error_message=(
-                f"今月の分析上限（{usage['limit']}回）に達しました。上限は毎月1日にリセットされます。"
-                "追加の分析が必要な場合は管理者にお問い合わせください。"
+                f"今月のクレジット残量が不足しています（この分析には{credit_cost}クレジット必要、"
+                f"残り{usage['remaining']}クレジット）。上限は毎月1日にリセットされます。"
+                "追加が必要な場合は管理者にお問い合わせください。"
             ),
-            error_code="MONTHLY_LIMIT_EXCEEDED",
+            error_code="MONTHLY_CREDIT_LIMIT_EXCEEDED",
             status_code=403,
-            details={"usage": usage},
+            details={"usage": usage, "required_credits": credit_cost},
         )
         raise HTTPException(status_code=status_code, detail=error_response)
 
@@ -227,6 +236,17 @@ async def analyze(
                 spec_data=spec_data_jsonable,
                 company_id=current_user.company_id,
                 created_by_user_id=current_user.id,
+            )
+
+            # 分析が成功しDBへの保存も完了した、この時点で初めてクレジット消費を
+            # 確定する（ここより前で例外が飛べば一切消費されない）。
+            monitor_repo.record_credit_usage(
+                company_id=current_user.company_id,
+                user_id=current_user.id,
+                credit_cost=credit_cost,
+                analysis_type=mode,
+                asset_id=asset_id,
+                asset_version=db_record.version,
             )
 
             logger.info(

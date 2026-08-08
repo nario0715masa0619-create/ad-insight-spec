@@ -120,17 +120,23 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 | is_deleted | BOOLEAN | 論理削除フラグ |
 | created_at | TIMESTAMP | 作成日時 |
 | updated_at | TIMESTAMP | 更新日時 |
-| company_id | INT (nullable, FK) | 招待制モニターベータ導入以降、作成した会社を記録（データ分離・月間利用上限カウントに使用。既存レコードはNULL） |
+| company_id | INT (nullable, FK) | 招待制モニターベータ導入以降、作成した会社を記録（データ分離・月次クレジット利用量カウントに使用。既存レコードはNULL） |
 | created_by_user_id | INT (nullable, FK) | 作成したモニターユーザー |
 
-#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions`）
+#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions` / `credit_usage_logs`）
 
 招待制モニターベータ公開のために追加したテーブル群です。詳細なカラム定義は
 `backend/app/models/beta_access.py`、運用手順は
 [MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) を参照してください。
+利用上限は「月◯件」ではなく「月次クレジット」方式（詳細:
+[MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、設計背景:
+[クレジット課金設計案](./campaignpilot_credit_billing_design.md)）。
 
-- `monitor_companies`: モニター企業（テナント）。`monthly_analysis_limit`（月間分析上限）を保持。
+- `monitor_companies`: モニター企業（テナント）。`monthly_credit_limit`（月次クレジット上限）を保持。
 - `monitor_users`: 招待されたユーザー。自由登録経路は存在せず、管理者/CLIのみが作成可能。
+- `credit_usage_logs`: クレジット消費ログ。分析が成功した時のみ行が作られる
+  （「実行前チェック→成功時のみ消費確定」方式のため、失敗した分析は一切現れない）。
+  当月の利用量はこのテーブルを都度集計して求め、集計用のスナップショットは持たない。
 - `monitor_sessions`: サーバー保持のログインセッション（署名付きトークンではなくDB行として管理し、
   停止時に即時失効できるようにしている）。
 
@@ -147,7 +153,8 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 正式な API パスは以下の通り統一されています。招待制モニターベータ導入以降、
 `/api/v1/specs/*` と `/api/v1/verification/*` は全てログイン必須です
 （`Authorization: Bearer <session_token>` ヘッダー、`app/api/deps.py::get_current_user`）。
-- `POST /api/v1/specs/analyze`: 分析実行（ログイン中ユーザーの会社の月間上限チェックを通過した場合のみ実行）
+- `POST /api/v1/specs/analyze`: 分析実行（ログイン中ユーザーの会社の月次クレジット残量が
+  この分析の消費量以上ある場合のみ実行。成功時のみクレジット消費が確定する）
 - `GET /api/v1/specs`: 分析結果一覧取得（ログイン中ユーザーの所属会社が所有するレコードのみ）
 - `GET /api/v1/specs/{asset_id}`: 分析結果詳細取得（他社所有のasset_idは404）
 - `DELETE /api/v1/specs/{asset_id}`: 分析結果の論理削除（他社所有のasset_idは404）

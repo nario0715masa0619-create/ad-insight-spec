@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models import MonitorCompany, MonitorUser, MonitorSession, AdInsight
+from app.models import MonitorCompany, MonitorUser, MonitorSession, CreditUsageLog
 from app.core.security import hash_password, generate_session_token
 
 SESSION_TTL_HOURS = 24 * 14  # 2週間。モニターベータはブラウザの自動ログイン維持を
@@ -27,10 +27,10 @@ class MonitorRepository:
     # ===== Company =====
 
     def create_company(
-        self, name: str, slug: str, monthly_analysis_limit: int = 50, notes: Optional[str] = None
+        self, name: str, slug: str, monthly_credit_limit: int = 100, notes: Optional[str] = None
     ) -> MonitorCompany:
         company = MonitorCompany(
-            name=name, slug=slug, monthly_analysis_limit=monthly_analysis_limit, notes=notes, is_active=True
+            name=name, slug=slug, monthly_credit_limit=monthly_credit_limit, notes=notes, is_active=True
         )
         self.db.add(company)
         self.db.commit()
@@ -49,15 +49,15 @@ class MonitorRepository:
     def update_company(
         self,
         company_id: int,
-        monthly_analysis_limit: Optional[int] = None,
+        monthly_credit_limit: Optional[int] = None,
         is_active: Optional[bool] = None,
         notes: Optional[str] = None,
     ) -> Optional[MonitorCompany]:
         company = self.get_company_by_id(company_id)
         if not company:
             return None
-        if monthly_analysis_limit is not None:
-            company.monthly_analysis_limit = monthly_analysis_limit
+        if monthly_credit_limit is not None:
+            company.monthly_credit_limit = monthly_credit_limit
         if is_active is not None:
             company.is_active = is_active
         if notes is not None:
@@ -154,28 +154,59 @@ class MonitorRepository:
         self.db.query(MonitorSession).filter(MonitorSession.token == token).delete()
         self.db.commit()
 
-    # ===== Usage / quota =====
+    # ===== Credit usage / quota =====
+    # 「実行前チェック→成功時のみ消費確定」方式（予約/返却の状態機械は持たない）。
+    # credit_usage_logs に行がある = 成功した分析でクレジットが消費された、を
+    # 意味するため、失敗した分析はここに一切現れず、消費計算にも影響しない。
 
-    def count_analyses_this_month(self, company_id: int, now: Optional[datetime] = None) -> int:
-        """当月1日以降に作成された（論理削除含む）company_idの分析件数。
+    def sum_credits_used_this_month(self, company_id: int, now: Optional[datetime] = None) -> int:
+        """当月1日以降に消費が確定した（=分析が成功した）company_idのクレジット合計。
 
-        論理削除された分析も「今月すでに実行した」実績としてカウントする
-        （削除して上限を回避できてしまうのを防ぐため）。
+        対応する分析結果(ad_insights)が後から論理削除されても、このログ行自体は
+        削除されないため「削除して上限を回避する」ことはできない。
         """
         month_start = current_month_start(now)
         return (
-            self.db.query(func.count(AdInsight.id))
-            .filter(AdInsight.company_id == company_id, AdInsight.created_at >= month_start)
+            self.db.query(func.coalesce(func.sum(CreditUsageLog.credit_cost), 0))
+            .filter(CreditUsageLog.company_id == company_id, CreditUsageLog.created_at >= month_start)
             .scalar()
             or 0
         )
 
+    def record_credit_usage(
+        self,
+        company_id: int,
+        user_id: int,
+        credit_cost: int,
+        analysis_type: str,
+        asset_id: Optional[str] = None,
+        asset_version: Optional[int] = None,
+    ) -> CreditUsageLog:
+        """分析成功時にのみ呼び出し、クレジット消費を確定する。"""
+        log = CreditUsageLog(
+            company_id=company_id,
+            user_id=user_id,
+            asset_id=asset_id,
+            asset_version=asset_version,
+            credit_cost=credit_cost,
+            analysis_type=analysis_type,
+        )
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+
     def get_usage_summary(self, company: MonitorCompany, now: Optional[datetime] = None) -> dict:
-        used = self.count_analyses_this_month(company.id, now=now)
-        limit = company.monthly_analysis_limit
+        used = self.sum_credits_used_this_month(company.id, now=now)
+        limit = company.monthly_credit_limit
         return {
             "used": used,
             "limit": limit,
             "remaining": max(limit - used, 0),
             "limit_reached": used >= limit,
         }
+
+    def has_sufficient_credits(self, company: MonitorCompany, credit_cost: int, now: Optional[datetime] = None) -> bool:
+        """`used + credit_cost <= monthly_credit_limit` を満たすかどうか。"""
+        used = self.sum_credits_used_this_month(company.id, now=now)
+        return used + credit_cost <= company.monthly_credit_limit
