@@ -23,6 +23,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.models.ad_insight import AdInsight
 from app.api.routes import specs as specs_module
+from app.services.meta_ads_csv_service import MetaAdsCsvError
 
 # StaticPool: sqlite:///:memory: は接続ごとに別DBになるため、TestClient経由の
 # リクエスト（別スレッド/別チェックアウトで接続を取得しうる）でも同じDBを
@@ -199,3 +200,53 @@ class TestDecisionSupportDiffConsistency:
         body = response.json()
         assert "decision_support_diff" not in body["diagnostics"]
         assert "decision_support_diff" not in body["evaluation_data"]["diagnostics"]
+
+
+class TestMetaAdsCsvErrorHandling:
+    """
+    Meta Ads CSV取り込みで解析不能な場合、specs.py::analyze() が
+    MetaAdsCsvError を汎用の500(ANALYSIS_ERROR)にせず、422 + 具体的な
+    案内文(error_code="META_ADS_CSV_..."）として返すことの回帰テスト。
+
+    実際のCSV解析ロジック自体は test_meta_ads_csv_service.py で検証済みのため、
+    ここでは AnalysisOrchestrator.run() が MetaAdsCsvError を送出した場合の
+    API層のハンドリングのみを検証する。
+    """
+
+    def test_meta_ads_csv_error_returns_422_with_guidance(self, client):
+        csv_error = MetaAdsCsvError(
+            "CSVから主要指標を読み取れませんでした（不足している列: インプレッション、クリック（すべて）"
+            "）。Meta Ads Manager のエクスポート設定で、これらの指標を含めたうえで再度CSVを書き出し、"
+            "そのままアップロードし直してください。",
+            error_code="META_ADS_CSV_MISSING_REQUIRED_COLUMNS",
+            missing_fields=["impressions", "clicks"],
+        )
+
+        with patch.object(specs_module.AnalysisOrchestrator, "run", side_effect=csv_error):
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={
+                    "input_file": ("test.png", b"fake-image-bytes", "image/png"),
+                    "kpi_file": ("kpi.csv", b"campaign,spend\ntest,1000\n", "text/csv"),
+                },
+                data={"mode": "file_plus_lp_plus_manual_kpi"},
+            )
+
+        assert response.status_code == 422
+        # このテスト用アプリは specs.router のみをマウントしており、main.py の
+        # StarletteHTTPException用カスタムハンドラ（detailをトップレベルへ展開する）を
+        # 経由しないため、FastAPIのデフォルト挙動どおり detail の下に入る。
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "META_ADS_CSV_MISSING_REQUIRED_COLUMNS"
+        assert "インプレッション" in detail["error"]
+        assert detail["details"]["missing_fields"] == ["impressions", "clicks"]
+
+    def test_meta_ads_csv_error_does_not_fall_through_to_generic_500(self, client):
+        """MetaAdsCsvErrorがgenericなException分岐(500/ANALYSIS_ERROR)に落ちないこと"""
+        csv_error = MetaAdsCsvError("CSVファイルが空です。", error_code="META_ADS_CSV_EMPTY")
+
+        with patch.object(specs_module.AnalysisOrchestrator, "run", side_effect=csv_error):
+            response = _post_analyze(client)
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["error_code"] != "ANALYSIS_ERROR"

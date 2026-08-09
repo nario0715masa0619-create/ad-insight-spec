@@ -1180,7 +1180,7 @@ with tab_new:
     mode_requirements = {
         "file_only": "必要な入力: 画像/動画ファイル",
         "file_plus_lp": "必要な入力: 画像/動画ファイル + LPファイル（HTML）",
-        "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPIファイル（JSON）",
+        "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPI情報（Meta Ads CSV または JSON）",
     }
     st.caption(f"ℹ️ {mode_requirements[mode]}")
 
@@ -1197,6 +1197,7 @@ with tab_new:
 
     lp_file_upload = None
     kpi_file_upload = None
+    kpi_input_method = None
     if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi"):
         lp_file_upload = st.file_uploader(
             "LPファイルをアップロード（HTML）",
@@ -1204,11 +1205,28 @@ with tab_new:
             key=widget_key("analyze", "file_upload", "lp"),
         )
     if mode == "file_plus_lp_plus_manual_kpi":
-        kpi_file_upload = st.file_uploader(
-            "KPIファイルをアップロード（JSON）",
-            type=["json"],
-            key=widget_key("analyze", "file_upload", "kpi"),
+        kpi_input_method = st.radio(
+            "KPI入力方法",
+            ["Meta Ads CSV（そのままアップロード・推奨）", "JSONで手入力（従来方式）"],
+            key=widget_key("analyze", "kpi_input_method"),
         )
+        if kpi_input_method.startswith("Meta Ads CSV"):
+            st.caption(
+                "ℹ️ Meta Ads Manager からエクスポートしたCSVをそのままアップロードしてください。"
+                "列の並べ替えや削除・値の整形は不要です（対応外の列は自動的に無視されます）。"
+            )
+            kpi_file_upload = st.file_uploader(
+                "Meta Ads CSVをアップロード（.csv）",
+                type=["csv"],
+                key=widget_key("analyze", "file_upload", "kpi_csv"),
+            )
+        else:
+            st.caption("ℹ️ impressions/clicks等のKPIをJSON形式で直接指定する従来方式です。")
+            kpi_file_upload = st.file_uploader(
+                "KPIファイルをアップロード（JSON）",
+                type=["json"],
+                key=widget_key("analyze", "file_upload", "kpi_json"),
+            )
 
     missing_items = []
     if not uploaded_file:
@@ -1216,7 +1234,8 @@ with tab_new:
     if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi") and not lp_file_upload:
         missing_items.append("LPファイル（HTML）")
     if mode == "file_plus_lp_plus_manual_kpi" and not kpi_file_upload:
-        missing_items.append("KPIファイル（JSON）")
+        kpi_label = "Meta Ads CSV" if kpi_input_method and kpi_input_method.startswith("Meta Ads CSV") else "KPIファイル（JSON）"
+        missing_items.append(kpi_label)
 
     if missing_items:
         st.warning(f"⚠️ 不足している入力: {'、'.join(missing_items)}。上記をアップロードすると分析を実行できます。")
@@ -1268,6 +1287,13 @@ with tab_new:
                 if err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
                     st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
                     st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
+                elif err_json and str(err_json.get("error_code", "")).startswith("META_ADS_CSV_"):
+                    st.error(f"⚠️ Meta Ads CSVを読み取れませんでした: {err_json.get('error', '')}")
+                    st.write(
+                        "**次のアクション**: Meta Ads Manager のエクスポート設定を確認し、"
+                        "必要な指標を含めて再エクスポートしたCSVをアップロードし直してください。"
+                        "手元でKPIが分かっている場合は、上の「JSONで手入力」に切り替えることもできます。"
+                    )
                 elif err_json:
                     st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
                     st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")

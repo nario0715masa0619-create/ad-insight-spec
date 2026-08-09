@@ -184,6 +184,12 @@ class AssetMeta(BaseModel):
     ad_name: Optional[str] = Field(None, description="広告名", max_length=255)
     analysis_period: Optional[AnalysisPeriod] = Field(None, description="分析期間")
     external_ids: Optional[ExternalIds] = Field(None, description="外部ID連携用")
+    kpi_source: Optional[str] = Field(
+        None, description="KPIデータの取得元 (manual_json / meta_ads_csv)"
+    )
+    kpi_granularity: Optional[str] = Field(
+        None, description="KPIデータの粒度 (campaign / adset / ad / unknown)。CSV取り込み時のみ設定"
+    )
 
     class Config:
         schema_extra = {

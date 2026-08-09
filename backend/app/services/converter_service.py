@@ -96,7 +96,7 @@ class ConverterService(BaseService):
             performance = self._populate_performance(kpi_result) if kpi_result else None
             diagnostics = self._populate_diagnostics(llm_result, performance)
             views = self._populate_views(performance, llm_result)
-            metadata_section = self._populate_metadata(mode, llm_result, ocr_result)
+            metadata_section = self._populate_metadata(mode, llm_result, ocr_result, metadata_result)
             
             # Build complete spec dict
             spec_dict = {
@@ -321,20 +321,28 @@ class ConverterService(BaseService):
         }
     
     def _populate_asset_meta(self, metadata_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Populate asset_meta section"""
+        """
+        Populate asset_meta section
+
+        campaign_name/adset_name/ad_name/analysis_period/kpi_source/kpi_granularity は、
+        Meta Ads CSV取り込み時のみ AnalysisOrchestrator が metadata_result に書き込む
+        （通常のmanual KPI(JSON)フローやfile_only/file_plus_lpでは常にNoneのまま＝既存動作を維持）。
+        """
         return {
             "asset_id": metadata_result.get("asset_id", "unknown"),
             "asset_name": metadata_result.get("asset_name"),
-            "platform": "unknown",
+            "platform": metadata_result.get("platform", "unknown"),
             "ad_account_id": None,
-            "campaign_name": None,
-            "adset_name": None,
-            "ad_name": None,
-            "analysis_period": {
+            "campaign_name": metadata_result.get("campaign_name"),
+            "adset_name": metadata_result.get("adset_name"),
+            "ad_name": metadata_result.get("ad_name"),
+            "analysis_period": metadata_result.get("analysis_period") or {
                 "start": None,
                 "end": None,
             },
             "external_ids": None,
+            "kpi_source": metadata_result.get("kpi_source"),
+            "kpi_granularity": metadata_result.get("kpi_granularity"),
         }
     
     def _populate_creative_core(
@@ -497,6 +505,7 @@ class ConverterService(BaseService):
         mode: str,
         llm_result: Dict[str, Any],
         ocr_result: Dict[str, Any],
+        metadata_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Populate _metadata section
@@ -525,6 +534,12 @@ class ConverterService(BaseService):
             validation_notes.append("decision_support generation failed (fail-soft, see diagnostics.decision_support_error)")
         if (llm_result or {}).get("improvements_error"):
             validation_notes.append("improvements generation failed (fail-soft, see diagnostics.improvements_error)")
+
+        # Meta Ads CSV取り込み時のみ、AnalysisOrchestrator が metadata_result に
+        # kpi_import_notes（列マッピング・粒度判定・不足項目の警告）を書き込む。
+        # manual KPI(JSON)フローでは常に空のため、既存の validation_notes 内容は変わらない。
+        csv_import_notes = (metadata_result or {}).get("kpi_import_notes") or []
+        validation_notes.extend(csv_import_notes)
 
         return {
             "generated_at": datetime.now().isoformat() + "Z",
