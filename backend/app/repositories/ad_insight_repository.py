@@ -27,20 +27,24 @@ class AdInsightRepository:
         asset_id: str,
         format: str,
         spec_data: Dict[str, Any],
-        version: Optional[int] = None
+        version: Optional[int] = None,
+        company_id: Optional[int] = None,
+        created_by_user_id: Optional[int] = None,
     ) -> AdInsight:
         """
         新しい AdInsight レコードを作成
-        
+
         Args:
             asset_id: 素材 ID
             format: フォーマット（video_static など）
             spec_data: ad_insight_spec v0.2 全体（dict）
             version: 指定がない場合は自動インクリメントされる
-        
+            company_id: 招待制モニターベータの会社ID（未認証呼び出し元は None のまま）
+            created_by_user_id: 作成したモニターユーザーID
+
         Returns:
             作成されたレコード
-        
+
         Raises:
             Exception: 同一 (asset_id, version) が既に存在する場合
         """
@@ -57,17 +61,19 @@ class AdInsightRepository:
                 AdInsight.is_deleted == False
             )
         ).first()
-        
+
         if existing:
             raise ValueError(f"AdInsight with asset_id={asset_id}, version={version} already exists")
-        
+
         # 新規レコード作成
         db_record = AdInsight(
             asset_id=asset_id,
             version=version,
             format=format,
             spec_data=spec_data,
-            is_deleted=False
+            is_deleted=False,
+            company_id=company_id,
+            created_by_user_id=created_by_user_id,
         )
         self.db.add(db_record)
         self.db.commit()
@@ -91,20 +97,28 @@ class AdInsightRepository:
             AdInsight.is_deleted == False
         ).first()
     
-    def get_latest_by_asset_id(self, asset_id: str) -> Optional[AdInsight]:
+    def get_latest_by_asset_id(
+        self, asset_id: str, company_id_filter: Optional[int] = None
+    ) -> Optional[AdInsight]:
         """
         asset_id の最新バージョンレコードを取得
-        
+
         Args:
             asset_id: 素材 ID
-        
+            company_id_filter: 指定時、この会社の所有レコードのみを対象にする
+                （招待制モニターベータのデータ分離用。他社のasset_idを指定
+                された場合は None を返す＝404扱いにする）
+
         Returns:
             最新バージョンレコード、または None
         """
-        return self.db.query(AdInsight).filter(
+        query = self.db.query(AdInsight).filter(
             AdInsight.asset_id == asset_id,
             AdInsight.is_deleted == False
-        ).order_by(desc(AdInsight.version)).first()
+        )
+        if company_id_filter is not None:
+            query = query.filter(AdInsight.company_id == company_id_filter)
+        return query.order_by(desc(AdInsight.version)).first()
     
     def get_all_versions_by_asset_id(self, asset_id: str) -> List[AdInsight]:
         """
@@ -121,7 +135,9 @@ class AdInsightRepository:
             AdInsight.is_deleted == False
         ).order_by(desc(AdInsight.version)).all()
 
-    def get_previous_version(self, asset_id: str, before_version: int) -> Optional[AdInsight]:
+    def get_previous_version(
+        self, asset_id: str, before_version: int, company_id_filter: Optional[int] = None
+    ) -> Optional[AdInsight]:
         """
         指定バージョンより前の、同一 asset_id の直前バージョンレコードを取得
         （decision_support の前回分析との差分表示に使用）
@@ -129,22 +145,29 @@ class AdInsightRepository:
         Args:
             asset_id: 素材 ID
             before_version: この値未満で最大のバージョンを探す
+            company_id_filter: 指定時、この会社が所有するレコードのみを対象にする
+                （招待制モニターベータのデータ分離用。asset_idがグローバルに
+                一意である前提が崩れた場合でも、他社の版を差分計算に混ぜない）
 
         Returns:
             直前バージョンレコード、または存在しない場合 None
         """
-        return self.db.query(AdInsight).filter(
+        query = self.db.query(AdInsight).filter(
             AdInsight.asset_id == asset_id,
             AdInsight.version < before_version,
             AdInsight.is_deleted == False
-        ).order_by(desc(AdInsight.version)).first()
+        )
+        if company_id_filter is not None:
+            query = query.filter(AdInsight.company_id == company_id_filter)
+        return query.order_by(desc(AdInsight.version)).first()
 
     def list_active(
         self,
         skip: int = 0,
         limit: int = 10,
         format_filter: Optional[str] = None,
-        asset_id_filter: Optional[str] = None
+        asset_id_filter: Optional[str] = None,
+        company_id_filter: Optional[int] = None,
     ) -> tuple[List[AdInsight], int]:
         """
         有効なレコードの一覧取得（ページング + フィルタリング対応、全バージョン込み）
@@ -154,6 +177,8 @@ class AdInsightRepository:
             limit: 取得件数上限
             format_filter: フォーマットでフィルタ（オプション）
             asset_id_filter: asset_id でフィルタ（オプション）
+            company_id_filter: 指定時、この会社が所有するレコードのみに絞る
+                （招待制モニターベータのデータ分離用）
 
         Returns:
             (レコード一覧, 全体件数)
@@ -165,6 +190,8 @@ class AdInsightRepository:
             query = query.filter(AdInsight.format == format_filter)
         if asset_id_filter:
             query = query.filter(AdInsight.asset_id.like(f"%{asset_id_filter}%"))
+        if company_id_filter is not None:
+            query = query.filter(AdInsight.company_id == company_id_filter)
 
         # 全体件数
         total_count = query.count()
@@ -179,7 +206,8 @@ class AdInsightRepository:
         skip: int = 0,
         limit: int = 10,
         format_filter: Optional[str] = None,
-        asset_id_filter: Optional[str] = None
+        asset_id_filter: Optional[str] = None,
+        company_id_filter: Optional[int] = None,
     ) -> tuple[List[AdInsight], int]:
         """
         asset_id ごとの最新バージョンのみの一覧取得（ページング + フィルタリング対応）
@@ -191,6 +219,8 @@ class AdInsightRepository:
             limit: 取得件数上限
             format_filter: フォーマットでフィルタ（オプション）
             asset_id_filter: asset_id でフィルタ（オプション）
+            company_id_filter: 指定時、この会社が所有するレコードのみに絞る
+                （招待制モニターベータのデータ分離用）
 
         Returns:
             (レコード一覧, 全体件数（asset_id のユニーク数）)
@@ -218,6 +248,8 @@ class AdInsightRepository:
             query = query.filter(AdInsight.format == format_filter)
         if asset_id_filter:
             query = query.filter(AdInsight.asset_id.like(f"%{asset_id_filter}%"))
+        if company_id_filter is not None:
+            query = query.filter(AdInsight.company_id == company_id_filter)
 
         # 全体件数（asset_id のユニーク数）
         total_count = query.count()
@@ -275,21 +307,29 @@ class AdInsightRepository:
         self.db.commit()
         return True
     
-    def delete_logical_by_asset_id(self, asset_id: str) -> int:
+    def delete_logical_by_asset_id(
+        self, asset_id: str, company_id_filter: Optional[int] = None
+    ) -> int:
         """
         asset_id の全バージョンを論理削除
-        
+
         Args:
             asset_id: 素材 ID
-        
+            company_id_filter: 指定時、この会社が所有するレコードのみ削除対象にする
+                （招待制モニターベータのデータ分離用。他社のasset_idを指定
+                された場合は0件のまま削除されない＝404扱いにする）
+
         Returns:
             削除したレコード数
         """
         now = datetime.utcnow()
-        deleted_count = self.db.query(AdInsight).filter(
+        query = self.db.query(AdInsight).filter(
             AdInsight.asset_id == asset_id,
             AdInsight.is_deleted == False
-        ).update(
+        )
+        if company_id_filter is not None:
+            query = query.filter(AdInsight.company_id == company_id_filter)
+        deleted_count = query.update(
             {AdInsight.is_deleted: True, AdInsight.deleted_at: now},
             synchronize_session=False
         )

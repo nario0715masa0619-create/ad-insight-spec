@@ -48,7 +48,14 @@ class Settings(BaseSettings):
     # API 設定
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
     API_RATE_LIMIT: int = int(os.getenv("API_RATE_LIMIT", "100"))  # requests per minute
-    
+
+    # モニターベータの月次クレジット消費量（分析モード別、3段階）。
+    # 価格・消費量は今後調整される前提のため、コードを変更せず環境変数だけで
+    # 変えられるようにしておく（詳細: app/services/credit_pricing.py）。
+    CREDIT_COST_LIGHT: int = int(os.getenv("CREDIT_COST_LIGHT", "1"))
+    CREDIT_COST_STANDARD: int = int(os.getenv("CREDIT_COST_STANDARD", "2"))
+    CREDIT_COST_HEAVY: int = int(os.getenv("CREDIT_COST_HEAVY", "3"))
+
     class Config:
         env_file = None  # dotenv 読込は上記で明示的に行うため、pydantic-settings 自身の
                           # env_file 自動探索（.env 内の未知キーで extra_forbidden クラッシュの原因）を無効化

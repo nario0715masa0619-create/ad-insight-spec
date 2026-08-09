@@ -19,6 +19,9 @@
 - [ ] DATABASE_URL が正しく設定されている
 - [ ] DB バックアップが日次実行予定である
 - [ ] テーブル初期化が完了している（AdInsight テーブル）
+- [ ] （招待制モニターベータ導入時）`alembic upgrade head` でモニター関連テーブルを反映し、
+      `scripts/manage_monitor_accounts.py` で最初の管理者アカウントをブートストラップ済みである
+      （詳細: [MONITOR_ACCOUNT_MANAGEMENT.md](MONITOR_ACCOUNT_MANAGEMENT.md)）
 
 ### アプリケーション設定
 - [ ] API_TIMEOUT_SECONDS が適切に設定されている（推奨: 60秒）
@@ -39,8 +42,13 @@
 ## 次段階項目（本番稼働後の改善）
 
 ### 認証・認可
-- [ ] JWT / OAuth による API 認証の実装
-- [ ] ユーザー・テナント管理機構の構築
+- [x] 招待制モニターベータ向けの最小限の認証（セッショントークン方式）とテナント（会社）
+      管理機構を実装済み（詳細: [MONITOR_BETA_OPERATION.md](MONITOR_BETA_OPERATION.md),
+      [MONITOR_ACCOUNT_MANAGEMENT.md](MONITOR_ACCOUNT_MANAGEMENT.md)）。
+      本番DBへのマイグレーション適用（`alembic upgrade head`、リビジョン `f3a1c9d2e8b0`）は
+      本チェックリストの他項目と同様、別途慎重に実施すること。
+- [ ] 本格的なJWT / OAuthによるAPI認証、セルフサインアップ、Meta Marketing API連携等の
+      SaaS化は引き続き未実装（今回のスコープでは意図的に対象外）。
 
 ### 高度なセキュリティ
 - [ ] WAF（Web Application Firewall）の導入

@@ -120,6 +120,50 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 | is_deleted | BOOLEAN | 論理削除フラグ |
 | created_at | TIMESTAMP | 作成日時 |
 | updated_at | TIMESTAMP | 更新日時 |
+| company_id | INT (nullable, FK) | 招待制モニターベータ導入以降、作成した会社を記録（データ分離・月次クレジット利用量カウントに使用。既存レコードはNULL） |
+| created_by_user_id | INT (nullable, FK) | 作成したモニターユーザー |
+
+#### モニターベータ用テーブル（`monitor_companies` / `monitor_users` / `monitor_sessions` / `credit_usage_logs` / `pricing_plans`）
+
+招待制モニターベータ公開のために追加したテーブル群です。詳細なカラム定義は
+`backend/app/models/beta_access.py`、運用手順は
+[MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) を参照してください。
+利用上限は「月◯件」ではなく「月次クレジット」方式（詳細:
+[MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、設計背景:
+[クレジット課金設計案](./campaignpilot_credit_billing_design.md)）。
+
+- `pricing_plans`: 価格・プラン定義（Starter/Growth/Pro/Monitor/Enterpriseなど）を
+  コードの定数ではなくデータとして保持するテーブル。`code`（人間可読な一意キー）、
+  `name`、`monthly_price_jpy`（個別見積プランはNULL可）、`monthly_credit_limit`、
+  `marketing_note`（例:「初期導入企業向けキャンペーン企画中」）、`is_public`、
+  `display_order`、`effective_from`/`effective_to`（有効期間、両方NULLなら常時有効）、
+  `is_active` を持つ。決済・請求とは接続していない（あくまで会社への
+  デフォルトクレジット上限の定義元）。初期5プランのマスタデータは
+  `scripts/seed_data/pricing_plans.json` に外出しし、`manage_monitor_accounts.py
+  seed-plans`（`MonitorRepository.upsert_plan_by_code`、`code`キーの冪等upsert）で
+  投入/更新する。Alembicマイグレーションにはスキーマ変更のみを持たせ、価格データは
+  焼き込まない方針（詳細: [MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md)）。
+- `monitor_companies`: モニター企業（テナント）。`plan_id`（`pricing_plans.id`への
+  任意FK）で紐づくプランを持てる。`monthly_credit_limit` は会社ごとの**個別上書き**
+  （NULL可。NULLは「上書きなし、プランまたは既定値に従う」を意味する）。実効上限は
+  「個別上書き(company.monthly_credit_limit) > 紐づいたプランの
+  monthly_credit_limit（有効な場合のみ） > 既定のフォールバック値(100)」の優先順位で
+  `MonitorRepository.resolve_monthly_credit_limit()` が解決する（`describe_limit_source()`
+  で `override`/`plan:<code>`/`plan:<code>(inactive)`/`fallback` のどれに該当するかを
+  CLI・管理APIの両方が同じロジックで判定する）。`0` は「アカウントは有効なまま今月の
+  分析だけ完全に止める」という正当な値として扱う（`is_active=false`によるアカウント
+  停止とは別軸）。
+- `monitor_users`: 招待されたユーザー。自由登録経路は存在せず、管理者/CLIのみが作成可能。
+- `credit_usage_logs`: クレジット消費ログ。分析が成功した時のみ行が作られる
+  （「実行前チェック→成功時のみ消費確定」方式のため、失敗した分析は一切現れない）。
+  当月の利用量はこのテーブルを都度集計して求め、集計用のスナップショットは持たない。
+  **既知の制約**: 残量チェックと消費確定の間に排他制御が無いため、同一会社への
+  同時リクエストが上限をわずかに超過しうる（詳細:
+  [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)）。
+- `monitor_sessions`: サーバー保持のログインセッション（署名付きトークンではなくDB行として管理し、
+  停止時に即時失効できるようにしている）。`token_hash`列にはセッショントークンの
+  SHA-256ハッシュのみを保存し、生トークンはDBに残さない（レビュー対応: 平文保存だと
+  DB漏洩時に即座に悪用可能だったため）。
 
 **複合キー戦略:**
 - Primary Key: `(asset_id, version)`
@@ -131,11 +175,19 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 ## 4. API / UI インターフェース（現行実装）
 
 ### FastAPI エンドポイント
-正式な API パスは以下の通り統一されています。
-- `POST /api/v1/specs/analyze`: 分析実行
-- `GET /api/v1/specs`: 分析結果一覧取得
-- `GET /api/v1/specs/{asset_id}`: 分析結果詳細取得
-- `DELETE /api/v1/specs/{asset_id}`: 分析結果の論理削除
+正式な API パスは以下の通り統一されています。招待制モニターベータ導入以降、
+`/api/v1/specs/*` と `/api/v1/verification/*` は全てログイン必須です
+（`Authorization: Bearer <session_token>` ヘッダー、`app/api/deps.py::get_current_user`）。
+- `POST /api/v1/specs/analyze`: 分析実行（ログイン中ユーザーの会社の月次クレジット残量が
+  この分析の消費量以上ある場合のみ実行。成功時のみクレジット消費が確定する）
+- `GET /api/v1/specs`: 分析結果一覧取得（ログイン中ユーザーの所属会社が所有するレコードのみ）
+- `GET /api/v1/specs/{asset_id}`: 分析結果詳細取得（他社所有のasset_idは404）
+- `DELETE /api/v1/specs/{asset_id}`: 分析結果の論理削除（他社所有のasset_idは404）
+- `POST /api/v1/auth/login` / `POST /api/v1/auth/logout` / `GET /api/v1/auth/me`: 招待制ログイン
+- `/api/v1/admin/*`: モニター企業・ユーザー管理（`is_admin=true` のユーザーのみ）
+
+詳細は本ドキュメントのデータベース設計セクション、および
+[MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md) を参照してください。
 
 ### Streamlit UI
 `frontend/streamlit_app.py` による UI は、「一覧/ダッシュボード」ではなく **「分析開始（アップロード）」を起動直後の第一画面** とし、以下の構成順序を推奨します。
