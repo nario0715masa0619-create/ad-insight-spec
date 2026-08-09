@@ -20,6 +20,11 @@
   [monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) を参照してください。
   以下の「リハーサル実施記録」はSQLiteで実施したものですが、同じ手順をPostgres環境でも
   別途リハーサルし、機能的な差分が無いことを確認済みです。
+- **「本番適用そのものをいつ・どちらのDBに対して行うか」の方針整理**は
+  [monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md) を
+  参照してください。本番のPostgres移行自体は[Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)
+  系列として別途進行中・未完了であり、モニターベータの本番適用はそれとは独立に
+  本番SQLiteへ先行して行える可能性が高いという結論をまとめています。
 
 **現状（2026-08-09時点）**: PR #91はまだ `main` にマージされていません（`state: OPEN`）。
 このドキュメントはマージ後を前提とした準備であり、本ドキュメント自体の作成・

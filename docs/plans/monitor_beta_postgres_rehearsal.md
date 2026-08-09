@@ -12,6 +12,12 @@
 - 本番適用の全体フロー（Phase 1〜4）は [monitor_beta_post_merge_runbook.md](./monitor_beta_post_merge_runbook.md)
   を参照してください。本ドキュメントの内容はそのPhase 2（本番適用前チェック）を
   Postgres観点で補強するものです。
+- **重要**: 本番のPostgres移行自体は、本ドキュメントとは独立に
+  [Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)系列として
+  既に進行中・未完了です（本番は現在SQLite運用中、Postgres実体は存在しない、という記録あり）。
+  「モニターベータの本番適用に、この隔離Postgresリハーサルが必須の前提条件かどうか」の
+  方針整理は [monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)
+  を参照してください（結論: 必須ではなく、本番SQLiteへの先行適用が現実的な経路です）。
 
 ## 検証環境
 
