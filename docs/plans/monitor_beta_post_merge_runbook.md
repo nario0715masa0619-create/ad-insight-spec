@@ -16,11 +16,16 @@
 - 本番デプロイ全般のチェックリストは [DEPLOYMENT.md](../DEPLOYMENT.md) /
   [OPERATIONS.md](../OPERATIONS.md) にあり、本ドキュメントはそのうち
   「招待制モニターベータ機能に固有の部分」を掘り下げたものです。
+- **本番がPostgresの場合の追加確認事項**は
+  [monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) を参照してください。
+  以下の「リハーサル実施記録」はSQLiteで実施したものですが、同じ手順をPostgres環境でも
+  別途リハーサルし、機能的な差分が無いことを確認済みです。
 
 **現状（2026-08-09時点）**: PR #91はまだ `main` にマージされていません（`state: OPEN`）。
 このドキュメントはマージ後を前提とした準備であり、本ドキュメント自体の作成・
 以下のリハーサルはすべて隔離した使い捨てSQLite DBに対して行い、本番・開発中の
-実DBには一切接続していません。
+実DBには一切接続していません（Postgres版の隔離リハーサルは別途
+[monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) で実施）。
 
 ## 全体の流れ
 
@@ -48,6 +53,11 @@ Phase 4: モニター1社目オンボーディング（MONITOR_ACCOUNT_MANAGEMEN
 
 本番DBへの変更は本タスクのスコープ外のため、以下は**判断材料の整理**であり、
 実際のコマンド実行はPhase 3を別途計画的に行うタイミングで実施してください。
+
+**本番がPostgresの場合**は、以下に加えて
+[monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md)
+「本番適用前チェック項目（Postgres観点の追加分）」も確認してください
+（エンコーディング、接続ユーザー権限、SSL要否等）。
 
 ### バックアップ方針
 
@@ -185,10 +195,12 @@ Phase 3完了後は、そのままそちらの手順に進んでください。
 
 ### 未検証事項（本タスクの範囲外・今後の課題）
 
-- **本番DB（Postgres想定）でのマイグレーション適用**: 本リハーサルはSQLiteのみで実施。
-  Postgres特有の型・制約差分（`batch_alter_table`はSQLite向けの機構であり、Postgresでは
-  素の`ALTER TABLE`として実行される）は未検証。Phase 3実施前にステージング相当の
-  Postgres環境で再度リハーサルすることを推奨する。
+- ~~**本番DB（Postgres想定）でのマイグレーション適用**~~: 別タスクで隔離Postgres環境に
+  対して同じ手順を実施済み。結果・差分・Postgres固有の注意点は
+  [monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) を参照
+  （結論: 機能的な差分は見つからず、既存の軽微な冗長インデックスがSQLite・Postgres
+  両方に共通して存在することを確認したのみ）。ただし本番相当のネットワーク経由・SSL接続
+  経路は未検証のまま残っている。
 - **実際の分析実行（`/api/v1/specs/analyze`）を通したクレジット消費**: LLM API呼び出しを
   伴うため、本タスクでは`/api/v1/auth/me`のクレジット残数表示までの確認に留めた
   （分析成功時の消費確定・失敗時の非消費は、既存の自動テスト
