@@ -38,15 +38,27 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Windows のコンソールは既定でcp932等の非UTF-8コードページのことがあり、
+# 日本語のプラン名・マーケティング文言（pricing_plans.json由来）を標準出力に
+# そのまま流すと文字化けする。出力先を明示的にUTF-8化して環境依存をなくす。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 try:
     from app.db.session import SessionLocal
     from app.db.base import Base
     from app.db.session import engine
     from app.repositories import MonitorRepository
-except ImportError:
+except ImportError as exc:
+    # 実際の原因は「PYTHONPATH未設定」だけでなく、依存パッケージ未インストール
+    # （誤ったPythonインタプリタで実行した等）のこともある。原因を握りつぶして
+    # 常に同じヒントだけを出すと誤ったトラブルシュートに誘導するため、元の
+    # 例外メッセージも併記する。
     print(
-        "Error: 'app' module not found. Run with PYTHONPATH=backend, "
-        "e.g.: cd backend && python ../scripts/manage_monitor_accounts.py ...",
+        f"Error: failed to import 'app' modules ({exc}).\n"
+        "Run with PYTHONPATH=backend, e.g.: cd backend && python ../scripts/manage_monitor_accounts.py ...\n"
+        "('app' module not found ならPYTHONPATH起因、'No module named X' なら依存パッケージ未インストールの疑い)",
         file=sys.stderr,
     )
     sys.exit(1)
