@@ -29,14 +29,21 @@ class CompanyCreate(BaseModel):
     name: str
     slug: str = Field(..., description="URLセーフな英数字ID（例: acme）。一意制約あり")
     monthly_credit_limit: Optional[int] = Field(
-        None, ge=1, description="個別上書き。未指定ならplan_idのプラン、両方無ければ既定値にフォールバック"
+        None,
+        ge=0,
+        description=(
+            "個別上書き。未指定ならplan_idのプラン、両方無ければ既定値にフォールバック。"
+            "0は「アカウントは有効なまま、今月の分析だけ完全に止める」という意味（アカウント停止(is_active)とは別軸）"
+        ),
     )
     plan_id: Optional[int] = Field(None, description="紐づけるプランのID（省略可）")
     notes: Optional[str] = None
 
 
 class CompanyUpdate(BaseModel):
-    monthly_credit_limit: Optional[int] = Field(None, ge=1, description="個別上書きを設定する")
+    monthly_credit_limit: Optional[int] = Field(
+        None, ge=0, description="個別上書きを設定する（0=今月の分析を完全にブロック）"
+    )
     clear_credit_limit_override: bool = Field(
         False, description="trueの場合、個別上書きを解除してプラン/既定値に戻す（monthly_credit_limitより優先）"
     )
@@ -48,7 +55,7 @@ class CompanyUpdate(BaseModel):
 class PlanCreate(BaseModel):
     code: str = Field(..., description="一意な英数字コード（例: starter, growth, pro, monitor, enterprise）")
     name: str
-    monthly_credit_limit: int = Field(..., ge=1)
+    monthly_credit_limit: int = Field(..., ge=0)
     monthly_price_jpy: Optional[int] = Field(None, ge=0, description="個別見積プラン等はNULL可")
     marketing_note: Optional[str] = Field(None, description="例:「初期導入企業向けキャンペーン企画中」")
     is_public: bool = True
@@ -59,7 +66,7 @@ class PlanCreate(BaseModel):
 
 class PlanUpdate(BaseModel):
     name: Optional[str] = None
-    monthly_credit_limit: Optional[int] = Field(None, ge=1)
+    monthly_credit_limit: Optional[int] = Field(None, ge=0)
     monthly_price_jpy: Optional[int] = Field(None, ge=0)
     clear_monthly_price_jpy: bool = False
     marketing_note: Optional[str] = None
@@ -103,20 +110,6 @@ def _plan_dict(plan) -> Dict[str, Any]:
     }
 
 
-def _describe_limit_source(repo: MonitorRepository, company) -> str:
-    """実効クレジット上限がどこから来ているか（override/plan/plan(inactive)/fallback）
-    をAPIレスポンスからも一目で判断できるようにする（CLIのlist-usageと同じロジック）。"""
-    if company.monthly_credit_limit is not None:
-        return "override"
-    if company.plan_id:
-        effective_plan = repo.get_effective_plan(company)
-        if effective_plan:
-            return f"plan:{effective_plan.code}"
-        dangling_plan = repo.get_plan_by_id(company.plan_id)
-        return f"plan:{dangling_plan.code if dangling_plan else '?'}(inactive)"
-    return "fallback"
-
-
 def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
     usage = repo.get_usage_summary(company)
     effective_plan = repo.get_effective_plan(company)
@@ -129,7 +122,7 @@ def _company_dict(company, repo: MonitorRepository) -> Dict[str, Any]:
         "monthly_credit_limit": company.monthly_credit_limit,
         "plan_id": company.plan_id,
         "plan": _plan_dict(effective_plan) if effective_plan else None,
-        "limit_source": _describe_limit_source(repo, company),
+        "limit_source": repo.describe_limit_source(company),
         "is_active": company.is_active,
         "notes": company.notes,
         "created_at": company.created_at.isoformat(),

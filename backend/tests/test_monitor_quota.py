@@ -116,6 +116,31 @@ def _post_analyze(client, asset_id="asset_quota_test", mode="file_only", raise_e
         )
 
 
+class TestUnknownModeRejected:
+    """未対応のmodeは、クレジットチェックより前に422で弾かれ、消費もされないこと
+    （credit_cost_for_mode()自体は未知modeをLight扱いにフォールバックする設計を
+    維持しつつ、APIの入力境界であるspecs.py::analyze()側で明示的に拒否する）。"""
+
+    def test_unknown_mode_returns_422_without_running_orchestrator(self, db_session):
+        company, user = _make_company_and_user(db_session, monthly_credit_limit=10, slug="unknown-mode-co")
+        client = _make_client(db_session, user)
+
+        with patch.object(specs_module.AnalysisOrchestrator, "run") as mock_run:
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "totally_unknown_mode"},
+            )
+            mock_run.assert_not_called()
+
+        assert response.status_code == 422
+        body = response.json()["detail"]
+        assert body["error_code"] == "VALIDATION_ERROR"
+
+        used = MonitorRepository(db_session).sum_credits_used_this_month(company.id)
+        assert used == 0
+
+
 class TestCreditConsumptionByMode:
     """分析タイプごとのクレジット消費（Light=1 / Standard=2 / Heavy=3）"""
 

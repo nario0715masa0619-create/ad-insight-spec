@@ -103,13 +103,19 @@ class MonitorSession(Base):
     """
     サーバー側で保持するログインセッション（署名付きトークンではなく、
     失効・強制ログアウトをシンプルに扱えるDB保持方式を採用）。
+
+    token_hash には生のセッショントークンのSHA-256ハッシュのみを保存し、
+    生トークン自体はDBに一切残さない（DB漏洩時にそのままAuthorizationヘッダーへ
+    貼り付けて悪用されることを防ぐため。app/core/security.py::hash_session_token
+    参照）。生トークンはログインAPIのレスポンスとしてクライアントに一度返す
+    だけで、サーバー側では保持しない。
     """
 
     __tablename__ = "monitor_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("monitor_users.id"), nullable=False, index=True)
-    token = Column(String(128), nullable=False, unique=True, index=True)
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     expires_at = Column(DateTime, nullable=False)
 

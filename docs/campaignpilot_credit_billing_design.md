@@ -1,16 +1,19 @@
 # CampaignPilot クレジット課金設計案
 
 > **注記**: これは将来の商用化フェーズに向けた設計案の全体像です。招待制モニターベータ
-> （2026-08時点、第3段階まで実装済み）では、このうち「会社単位のクレジット管理」
+> （2026-08時点、第3段階 + レビュー対応まで実装済み）では、このうち「会社単位のクレジット管理」
 > 「分析タイプ別の3段階固定消費（1/2/3）」「月初リセット」「実行前残量チェック」
 > 「成功時消費」「利用履歴の最小実装」「管理者の手動調整」に加え、**第2段階として
 > プラン定義（Starter/Growth/Pro/Monitor/Enterprise）を`pricing_plans`テーブルへ
 > 外出し**し、会社ごとの個別上書きとプラン適用を両立できるようにし、**第3段階として
 > 初期5プランのマスタデータ投入（`scripts/seed_data/pricing_plans.json` +
 > `seed-plans`コマンドによる冪等upsert）とモニター運用ルール・オンボーディング手順を
-> 整備しています**（「実装時の判断」セクション参照）。価格表ページ・キャンペーン文言の
-> 画面表示・決済連携・追加クレジット購入・繰越・予約(reserved)制の状態機械は意図的に
-> 未実装です。実装差分の詳細は [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、
+> 整備し、**さらにコードレビュー対応として認証タイミング差の是正・セッショントークンの
+> ハッシュ化保存・`monthly_credit_limit=0`の意味統一・`limit_source`判定の一本化・
+> 未対応modeの明示的エラー化を実施しています**（「実装時の判断」セクション参照）。
+> 価格表ページ・キャンペーン文言の画面表示・決済連携・追加クレジット購入・繰越・
+> 予約(reserved)制の状態機械は意図的に未実装です。実装差分の詳細は
+> [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、
 > 管理者向け操作は [MONITOR_ACCOUNT_MANAGEMENT.md](./MONITOR_ACCOUNT_MANAGEMENT.md) を参照してください。
 
 ## 1. 目的
@@ -491,3 +494,70 @@ CampaignPilotの課金設計は、**件数制よりもクレジット制のほ�
    `MONITOR_BETA_OPERATION.md`に初期プラン一覧表を追加した。理由: 運用手順は
    1箇所にまとまっているほうが参照しやすく、既に確立された文書構成
    （利用者向け/管理者向け/設計背景の3分割）を崩す理由がなかったため。
+
+## 実装時の判断（コードレビュー対応, 2026-08-09）
+
+PR #91 に対する外部レビューで指摘された項目への対応。優先度高（マージ前対応）2件、
+優先度中2件、明示のみ1件、fast-follow検討1件、minor1件。
+
+1. **ログインのタイミング差対策（優先度高）**: `POST /api/v1/auth/login`は、メール
+   アドレスが存在しない場合に `verify_password()` を呼ばずに即座401を返していたため、
+   実在メールアドレス（PBKDF2 260,000回のハッシュ計算が走る＝遅い）と存在しない
+   メールアドレス（即座に返る＝速い）とで応答時間に差があり、メールアドレスの
+   登録有無を外部から推測できてしまう問題があった。`app/core/security.py`に
+   `DUMMY_PASSWORD_HASH`（起動時に一度だけ生成する固定のダミーハッシュ）を追加し、
+   ユーザーが見つからない場合もこのダミーハッシュに対して`verify_password()`を
+   必ず実行するようにして、両方の経路が同じ計算コストを払うようにした。
+   テストは実時間計測ではなく`unittest.mock.patch`で`verify_password`の呼び出し
+   経路・引数を検証する形にした（時間計測ベースのテストはCI環境差でフレーキーに
+   なりやすいため、要求どおり経路検証に留めた）。
+2. **セッショントークンの非平文化（優先度高）**: `monitor_sessions.token`に生の
+   セッショントークンをそのまま保存していたため、DB漏洩時に即座に悪用可能だった
+   （パスワードはPBKDF2でハッシュ化していたのに対し、セッショントークンは無防備
+   だった）。`app/core/security.py`に`hash_session_token()`（標準ライブラリの
+   SHA-256のみ、新規依存なし）を追加し、`monitor_sessions.token`を`token_hash`に
+   リネームしてハッシュのみを保存するよう変更した。セッショントークン自体は
+   `secrets.token_urlsafe(32)`由来の高エントロピーな値でオフライン総当たりの対象に
+   する必要が薄いため、パスワードと同じ低速ハッシュ（PBKDF2）ではなく単純な
+   SHA-256で十分と判断した（ソルトも不要）。生トークンはログインAPIのレスポンスで
+   クライアントに一度返すだけで、以後サーバー側では一切保持しない。
+   マイグレーション（`d3f8a6b2c1e4`）でカラムをリネームし、upgrade/downgrade
+   両方をSQLiteで確認した。本PRは未リリースのため、旧方式（平文）で発行済みの
+   セッション行はリネーム後にハッシュとして扱われることになり事実上無効になるが、
+   実データが存在しない前提なので許容している。
+3. **`monthly_credit_limit=0`の仕様統一（優先度中）**: CLIでは0を許容し
+   （実際にレビュー時の実機確認で「利用ブロック確認」用に使用した）、Admin API側は
+   `Field(ge=1)`で拒否するという不整合があった。「0を許容する」方向に統一した
+   （`ge=1`→`ge=0`に変更）。理由: 0は「アカウントは有効なまま今月の分析だけ止める」
+   という実務上自然な操作であり（支払い遅延中の一時停止など）、`is_active=false`
+   によるアカウント全体の停止とは別の粒度で必要になる場面がある。負の値は
+   引き続き拒否する。
+4. **`limit_source`判定ロジックの共通化（優先度中）**: `admin.py`と
+   `manage_monitor_accounts.py`に同一ロジックが独立して実装されていたため、
+   `MonitorRepository.describe_limit_source(company)`に一本化し、両者はこれを
+   呼び出すだけにした。出力仕様（`override`/`plan:<code>`/`plan:<code>(inactive)`/
+   `fallback`）は変更していない。
+5. **check-then-consumeの競合overshoot（明示のみ）**: `has_sufficient_credits()`と
+   `record_credit_usage()`の間に排他制御が無く、同一会社への同時リクエストが
+   上限をわずかに超過しうる問題は、実装を広げず「既知の制約」として
+   `docs/MONITOR_BETA_OPERATION.md`とコード内コメント
+   （`monitor_repository.py`のCredit usage/quotaセクション）の両方に明記した。
+   3〜5社規模のベータでは同時実行の衝突頻度が実務上無視できる水準という判断は
+   変えていない。将来の対応候補（行ロック、トランザクション分離レベル強化、
+   予約状態機械）も明記した。
+6. **CLIの自動テスト補強（fast-follow候補としていたが、今回対応）**:
+   `scripts/manage_monitor_accounts.py`はこれまで手動確認のみだった。
+   `backend/tests/test_manage_monitor_accounts_cli.py`を新設し、CLIモジュールが
+   束縛する`SessionLocal`/`engine`を`monkeypatch`でインメモリSQLiteに差し替える
+   ことで、開発者の実DBファイルに触れずに`seed-plans`のdry-run/実行/冪等性、
+   `create-company`の0クレジット/プラン紐付け、`_parse_iso_datetime`を検証できる
+   ようにした（大掛かりなCLIテスト基盤は作らず、既存の`cmd_*`関数をそのまま
+   `SimpleNamespace`で呼び出す軽量な形に留めた）。
+7. **未知modeの明示的エラー化（minor）**: `credit_cost_for_mode()`自体は未知の
+   modeをLightティア扱いにフォールバックする既存の挙動・既存テスト
+   （`test_unknown_mode_falls_back_to_light_tier`）を変更せず維持した
+   （このモジュールの責務は「コストを引く」ことに留め、リクエストの妥当性検証は
+   別レイヤーの責務とする方が筋が良いと判断）。代わりにAPIの入力境界である
+   `specs.py::analyze()`側で、既知の3モード以外を422で明示的に拒否するように
+   した。`VALID_ANALYZE_MODES`は`credit_pricing.py`の`_MODE_TO_TIER`から導出し、
+   二重管理を避けている。

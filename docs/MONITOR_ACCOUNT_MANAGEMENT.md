@@ -160,6 +160,14 @@ python scripts/manage_monitor_accounts.py clear-limit-override --company-slug ac
 実装していないため、実運用上は「Monitor/Enterpriseは一般顧客向けに営業提案する対象では
 ない」という位置づけの記録以上の意味は持ちません。
 
+**`monthly_credit_limit=0` について**: 0は無効な値やバグではなく、「アカウントは
+`is_active=true`のまま、今月の分析実行だけを完全に止める」という正当な設定です
+（例: 支払い遅延中の一時停止、契約更新待ちなど、アカウント自体を止めるほどではないが
+新規分析はさせたくないケース）。会社作成(`create-company --limit 0`)・上限変更
+(`set-limit --limit 0`)、管理API(`monthly_credit_limit: 0`)のいずれでも同じ意味で
+使えます（以前はCLIでのみ0を許容しAdmin APIでは`422`になる不整合があったため、
+両者を`0`以上許容で統一しました）。負の値は両経路とも拒否されます。
+
 ## 3. モニターユーザーを招待する
 
 ### CLI

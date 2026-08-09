@@ -50,3 +50,27 @@ def verify_password(password: str, password_hash: str) -> bool:
 def generate_session_token() -> str:
     """ランダムな不透明セッショントークンを生成する"""
     return secrets.token_urlsafe(32)
+
+
+def hash_session_token(raw_token: str) -> str:
+    """
+    セッショントークンをDBに保存する前にハッシュ化する。
+
+    パスワードと違い、セッショントークン自体がsecrets.token_urlsafe(32)由来の
+    高エントロピーなランダム値であり、オフライン総当たりの対象にする必要が
+    ないため、PBKDF2のような低速ハッシュではなく単純なSHA-256で十分
+    （ソルトも不要）。目的は「DBが漏洩しても、そこに書かれた値をそのまま
+    Authorizationヘッダーに貼り付けるだけでは有効なセッションとして通用しない
+    ようにする」ことであり、パスワード用のhash_password/verify_passwordとは
+    要求が異なる。
+    """
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+# ログイン失敗時のタイミング差から「メールアドレスが登録されているかどうか」が
+# 推測できてしまうのを防ぐための固定ダミーハッシュ。存在しないメールアドレスで
+# ログインが試みられた場合でも、このハッシュに対して verify_password() を実行し、
+# 実在ユーザーへの検証と同じ計算コスト（PBKDF2 260,000回）を払わせる
+# （backend/app/api/routes/auth.py::login 参照）。
+# パスワード自体に意味は無く、実在するどのアカウントとも一致しない。
+DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))

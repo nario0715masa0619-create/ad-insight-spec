@@ -125,6 +125,33 @@ class TestCompanyManagement:
         response = client.patch("/api/v1/admin/companies/999999", json={"monthly_credit_limit": 10})
         assert response.status_code == 404
 
+    def test_create_company_with_zero_credit_limit_is_allowed(self, db_session, seed_company_and_users):
+        """0は「アカウントは有効なまま今月の分析だけ完全に止める」という正当な値
+        （CLIのcreate-company --limit 0と同じ意味論。レビュー指摘#3対応）。"""
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        response = client.post(
+            "/api/v1/admin/companies", json={"name": "Blocked Co", "slug": "blocked-co", "monthly_credit_limit": 0}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["monthly_credit_limit"] == 0
+        assert body["usage_this_month"] == {"used": 0, "limit": 0, "remaining": 0, "limit_reached": True}
+
+    def test_update_company_to_zero_credit_limit_is_allowed(self, db_session, seed_company_and_users):
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        company_id = seed_company_and_users["company"].id
+        response = client.patch(f"/api/v1/admin/companies/{company_id}", json={"monthly_credit_limit": 0})
+        assert response.status_code == 200
+        assert response.json()["monthly_credit_limit"] == 0
+        assert response.json()["limit_source"] == "override"
+
+    def test_create_company_with_negative_credit_limit_is_rejected(self, db_session, seed_company_and_users):
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        response = client.post(
+            "/api/v1/admin/companies", json={"name": "Bad Co", "slug": "bad-co", "monthly_credit_limit": -1}
+        )
+        assert response.status_code == 422
+
 
 class TestUserManagement:
     def test_admin_can_invite_user_with_generated_password(self, db_session, seed_company_and_users):
@@ -263,6 +290,22 @@ class TestPlanManagement:
         client = _make_client(db_session, seed_company_and_users["admin_user"])
         response = client.patch("/api/v1/admin/plans/999999", json={"monthly_credit_limit": 10})
         assert response.status_code == 404
+
+    def test_create_plan_with_zero_credit_limit_is_allowed(self, db_session, seed_company_and_users):
+        """CLI/API間の仕様不一致解消（レビュー指摘#3）: 0クレジットのプランも作成できる。"""
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        response = client.post(
+            "/api/v1/admin/plans", json={"code": "frozen", "name": "Frozen", "monthly_credit_limit": 0}
+        )
+        assert response.status_code == 200
+        assert response.json()["monthly_credit_limit"] == 0
+
+    def test_create_plan_with_negative_credit_limit_is_rejected(self, db_session, seed_company_and_users):
+        client = _make_client(db_session, seed_company_and_users["admin_user"])
+        response = client.post(
+            "/api/v1/admin/plans", json={"code": "invalid", "name": "Invalid", "monthly_credit_limit": -5}
+        )
+        assert response.status_code == 422
 
 
 class TestCompanyPlanAssignment:

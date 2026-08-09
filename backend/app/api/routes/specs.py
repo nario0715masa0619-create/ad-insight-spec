@@ -15,7 +15,7 @@ from app.schemas.ad_insight import AdInsightSpec
 from app.services.analysis_orchestrator import AnalysisOrchestrator
 from app.services.asset_evaluation_adapter import resolve_spec_data
 from app.services.meta_ads_csv_service import MetaAdsCsvError
-from app.services.credit_pricing import credit_cost_for_mode
+from app.services.credit_pricing import credit_cost_for_mode, VALID_ANALYZE_MODES
 from app.api.deps import get_current_user
 
 from app.utils.error_handler import create_error_response, ErrorResponse
@@ -135,6 +135,7 @@ async def analyze(
     - 400: 入力ファイル形式エラー
     - 401: 未ログイン/セッション無効
     - 403: 当月のクレジット上限に到達（この分析に必要なクレジットが残量を超える）
+    - 422: 未対応のmode（`file_only` / `file_plus_lp` / `file_plus_lp_plus_manual_kpi` 以外）
     - 500: 分析エラー
 
     **クレジット消費について**:
@@ -143,6 +144,17 @@ async def analyze(
     クレジットを消費しない（予約状態は持たず、成功時に初めて`credit_usage_logs`へ
     記録することで実現している）。
     """
+    if mode not in VALID_ANALYZE_MODES:
+        error_response, status_code = create_error_response(
+            error_message=(
+                f"未対応のmodeです: '{mode}'。"
+                f"{'/'.join(sorted(VALID_ANALYZE_MODES))} のいずれかを指定してください。"
+            ),
+            error_code="VALIDATION_ERROR",
+            status_code=422,
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
+
     monitor_repo = MonitorRepository(db)
     company = monitor_repo.get_company_by_id(current_user.company_id)
     credit_cost = credit_cost_for_mode(mode)

@@ -16,6 +16,14 @@ _MODE_TO_TIER = {
 
 _DEFAULT_TIER = "light"
 
+# /analyze が受け付ける既知のmode一覧（credit_cost_for_mode()の対応表と同じ
+# ソースから導出し、二重管理を避ける）。呼び出し側(specs.py)がリクエストの
+# mode を早期に検証する際の判定に使う。credit_cost_for_mode() 自体は
+# 未知のmodeに対して例外を投げず light 扱いにフォールバックする設計を維持する
+# （このモジュールは「costを引く」ことだけに責務を絞り、"未知のmodeを拒否する"
+# というAPI入力バリデーションの責務は境界であるspecs.py側に置く）。
+VALID_ANALYZE_MODES = frozenset(_MODE_TO_TIER.keys())
+
 
 def credit_cost_for_mode(mode: str, settings: Optional[Settings] = None) -> int:
     """
@@ -25,6 +33,10 @@ def credit_cost_for_mode(mode: str, settings: Optional[Settings] = None) -> int:
     CREDIT_COST_LIGHT/STANDARD/HEAVY）から都度読む。運用中に消費量を
     調整したい場合、コード変更・再デプロイなしで環境変数の変更のみで
     対応できる（管理画面はまだ用意していないため、今回はこの粒度に留める）。
+
+    未知のmodeは例外を投げずLightティア扱いにフォールバックする
+    （呼び出し側で未知のmodeを弾きたい場合は VALID_ANALYZE_MODES を使うこと。
+    例: backend/app/api/routes/specs.py::analyze()）。
     """
     settings = settings or get_settings()
     tier = _MODE_TO_TIER.get(mode, _DEFAULT_TIER)

@@ -376,23 +376,6 @@ def cmd_reset_password(args: argparse.Namespace) -> None:
         db.close()
 
 
-def _describe_limit_source(repo: MonitorRepository, company) -> str:
-    """実効クレジット上限がどこから来ているか（個別上書き／有効なプラン／
-    プランは紐づいているが今は無効・期限外／どちらも無くフォールパック）を
-    一目で分かるようにする。運用担当が『なぜこの上限になっているか』を
-    list-usage の出力だけで判断できるようにするための表示専用ロジック。"""
-    if company.monthly_credit_limit is not None:
-        return "override"
-    if company.plan_id:
-        effective_plan = repo.get_effective_plan(company)
-        if effective_plan:
-            return f"plan:{effective_plan.code}"
-        dangling_plan = repo.get_plan_by_id(company.plan_id)
-        label = dangling_plan.code if dangling_plan else "?"
-        return f"plan:{label}(inactive)"
-    return "fallback"
-
-
 def cmd_list_usage(args: argparse.Namespace) -> None:
     db = SessionLocal()
     try:
@@ -407,7 +390,9 @@ def cmd_list_usage(args: argparse.Namespace) -> None:
         )
         for company in companies:
             usage = repo.get_usage_summary(company)
-            source = _describe_limit_source(repo, company)
+            # limit_source の判定ロジックは MonitorRepository.describe_limit_source に
+            # 一本化している（admin.py と別々に持つと表示仕様がズレるリスクがあるため）。
+            source = repo.describe_limit_source(company)
             print(
                 f"{company.slug:<20} {company.name:<24} {source:<18} {str(company.is_active):<8} "
                 f"{usage['used']}/{usage['limit']:<8} {usage['remaining']:<10}"

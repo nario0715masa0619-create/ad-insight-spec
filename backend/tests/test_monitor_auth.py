@@ -4,6 +4,8 @@
 specs.router や verification.router と同様、auth.router だけをマウントした
 最小のFastAPIアプリ + インメモリSQLiteで検証する。
 """
+from unittest.mock import patch
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,9 +15,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import MonitorCompany, MonitorUser
+from app.models import MonitorCompany, MonitorUser, MonitorSession
 from app.api.routes import auth as auth_module
-from app.core.security import hash_password
+from app.core.security import hash_password, hash_session_token, DUMMY_PASSWORD_HASH
 
 engine = create_engine(
     "sqlite:///:memory:",
@@ -98,6 +100,28 @@ class TestLogin:
         # （test_analyze_endpoint.pyのMetaAdsCsvErrorテストと同じ事情）。
         assert response.json()["detail"]["error_code"] == "INVALID_CREDENTIALS"
 
+    def test_unknown_email_still_pays_password_verification_cost(self, client):
+        """タイミング差によるメール列挙対策（レビュー指摘#1）:
+        存在しないメールアドレスでログインを試みた場合でも、実在ユーザーの
+        検証と同じ経路(verify_password)を、同じダミーハッシュに対して必ず
+        通ることを確認する。厳密な時間計測ではなく、呼び出し経路そのものを
+        検証することで安定したテストにする。"""
+        with patch.object(auth_module, "verify_password", wraps=auth_module.verify_password) as spy:
+            response = client.post(
+                "/api/v1/auth/login", json={"email": "nobody@example.com", "password": "whatever"}
+            )
+        assert response.status_code == 401
+        spy.assert_called_once_with("whatever", DUMMY_PASSWORD_HASH)
+
+    def test_known_email_verifies_against_its_own_hash_not_dummy(self, client, active_user):
+        """実在ユーザーの場合は、当然ながら本人のpassword_hashに対して検証されること
+        （ダミーハッシュにすり替わっていないことの確認）。"""
+        with patch.object(auth_module, "verify_password", wraps=auth_module.verify_password) as spy:
+            client.post(
+                "/api/v1/auth/login", json={"email": active_user.email, "password": "wrong-password"}
+            )
+        spy.assert_called_once_with("wrong-password", active_user.password_hash)
+
     def test_login_fails_for_wrong_password(self, client, active_user):
         response = client.post(
             "/api/v1/auth/login", json={"email": active_user.email, "password": "wrong-password"}
@@ -170,6 +194,24 @@ class TestMeAndLogout:
     def test_logout_without_token_is_idempotent(self, client):
         response = client.post("/api/v1/auth/logout")
         assert response.status_code == 200
+
+    def test_raw_session_token_is_never_stored_in_the_database(self, client, db_session, active_user):
+        """レビュー指摘#2対応: monitor_sessions には生トークンではなくハッシュのみが
+        保存されること。生トークンでDBを検索しても行がヒットしないこと、
+        ハッシュ化した値でなら見つかることの両方を確認する。"""
+        login_response = client.post(
+            "/api/v1/auth/login", json={"email": active_user.email, "password": "correct-horse"}
+        )
+        raw_token = login_response.json()["session_token"]
+
+        stored = db_session.query(MonitorSession).filter(MonitorSession.user_id == active_user.id).one()
+        assert stored.token_hash != raw_token
+        assert stored.token_hash == hash_session_token(raw_token)
+
+        # 生トークンそのものをDBから検索しても何もヒットしない
+        assert (
+            db_session.query(MonitorSession).filter(MonitorSession.token_hash == raw_token).first() is None
+        )
 
     def test_deactivating_user_immediately_invalidates_existing_session(self, client, db_session, active_user):
         """ログイン済みでも、後から停止(is_active=False)されれば次のリクエストから

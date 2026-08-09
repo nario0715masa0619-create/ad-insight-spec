@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models import MonitorCompany, MonitorUser, MonitorSession, CreditUsageLog, PricingPlan
-from app.core.security import hash_password, generate_session_token
+from app.core.security import hash_password, generate_session_token, hash_session_token
 
 SESSION_TTL_HOURS = 24 * 14  # 2週間。モニターベータはブラウザの自動ログイン維持を
 # 優先し、頻繁な再ログインで離脱されるより長めに倒す（本格SaaSの厳格なセッション
@@ -328,32 +328,49 @@ class MonitorRepository:
 
     # ===== Session =====
 
-    def create_session(self, user_id: int) -> MonitorSession:
+    def create_session(self, user_id: int) -> Tuple[MonitorSession, str]:
+        """
+        新しいセッションを作成する。DBにはハッシュのみを保存し、生トークンは
+        戻り値としてのみ返す（呼び出し側=ログインAPIがこの生トークンを
+        レスポンスボディに一度だけ含め、以降サーバー側では保持しない）。
+
+        Returns:
+            (作成された MonitorSession 行, 生のセッショントークン)
+        """
+        raw_token = generate_session_token()
         session = MonitorSession(
             user_id=user_id,
-            token=generate_session_token(),
+            token_hash=hash_session_token(raw_token),
             expires_at=datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS),
         )
         self.db.add(session)
         self.db.commit()
         self.db.refresh(session)
-        return session
+        return session, raw_token
 
-    def get_valid_session(self, token: str) -> Optional[MonitorSession]:
+    def get_valid_session(self, raw_token: str) -> Optional[MonitorSession]:
+        """クライアントから受け取った生トークンをハッシュ化してから照合する。"""
+        token_hash = hash_session_token(raw_token)
         return (
             self.db.query(MonitorSession)
-            .filter(MonitorSession.token == token, MonitorSession.expires_at > datetime.utcnow())
+            .filter(MonitorSession.token_hash == token_hash, MonitorSession.expires_at > datetime.utcnow())
             .first()
         )
 
-    def delete_session(self, token: str) -> None:
-        self.db.query(MonitorSession).filter(MonitorSession.token == token).delete()
+    def delete_session(self, raw_token: str) -> None:
+        token_hash = hash_session_token(raw_token)
+        self.db.query(MonitorSession).filter(MonitorSession.token_hash == token_hash).delete()
         self.db.commit()
 
     # ===== Credit usage / quota =====
     # 「実行前チェック→成功時のみ消費確定」方式（予約/返却の状態機械は持たない）。
     # credit_usage_logs に行がある = 成功した分析でクレジットが消費された、を
     # 意味するため、失敗した分析はここに一切現れず、消費計算にも影響しない。
+    #
+    # 既知の制約: has_sufficient_credits() と record_credit_usage() の間に排他制御は
+    # 無い。同一会社への同時リクエストは両方とも「残量あり」判定を通過しうるため、
+    # 上限をわずかに超過する可能性がある。3〜5社規模のベータでは許容範囲と判断した
+    # 意図的なスコープ外（詳細: docs/MONITOR_BETA_OPERATION.md の既知の制約セクション）。
 
     def sum_credits_used_this_month(self, company_id: int, now: Optional[datetime] = None) -> int:
         """当月1日以降に消費が確定した（=分析が成功した）company_idのクレジット合計。
@@ -407,3 +424,23 @@ class MonitorRepository:
         used = self.sum_credits_used_this_month(company.id, now=now)
         limit = self.resolve_monthly_credit_limit(company, now=now)
         return used + credit_cost <= limit
+
+    def describe_limit_source(self, company: MonitorCompany, now: Optional[datetime] = None) -> str:
+        """
+        実効クレジット上限がどこから来ているか（個別上書き／有効なプラン／
+        プランは紐づいているが今は無効・期限外／どちらも無くフォールバック）を
+        一目で分かるようにする。運用担当が「なぜこの上限になっているか」を
+        管理API・CLIのどちらからでも同じ基準で判断できるよう、両者で共有する
+        単一の実装（レビュー指摘: admin.py と manage_monitor_accounts.py に
+        同等ロジックが二重実装されていた問題への対応）。
+        """
+        if company.monthly_credit_limit is not None:
+            return "override"
+        if company.plan_id:
+            effective_plan = self.get_effective_plan(company, now=now)
+            if effective_plan:
+                return f"plan:{effective_plan.code}"
+            dangling_plan = self.get_plan_by_id(company.plan_id)
+            label = dangling_plan.code if dangling_plan else "?"
+            return f"plan:{label}(inactive)"
+        return "fallback"

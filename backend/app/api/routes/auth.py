@@ -8,7 +8,7 @@ from app.api.deps import get_current_user, _extract_token
 from app.db.session import get_db
 from app.models import MonitorUser
 from app.repositories import MonitorRepository
-from app.core.security import verify_password
+from app.core.security import verify_password, DUMMY_PASSWORD_HASH
 from app.utils.error_handler import create_error_response
 from app.utils.logging import request_id_var, trace_id_var, get_logger
 
@@ -46,6 +46,12 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Dict[st
     メール不存在・パスワード不一致・停止中アカウントのいずれも同一の
     汎用エラーメッセージ/エラーコードを返す（招待制であることを踏まえ、
     どの理由で失敗したかを外部から推測されないようにするため）。
+
+    メールアドレスが存在するかどうかで応答時間に差が出ないよう、
+    ユーザーが見つからない場合も DUMMY_PASSWORD_HASH に対して
+    verify_password() を実行し、実在ユーザーの検証と同じ計算コストを払う
+    （存在しないメールだけ即座に401を返すと、応答時間の差からメール
+    アドレスの登録有無を推測されてしまうため）。
     """
     repo = MonitorRepository(db)
     user = repo.get_user_by_email(payload.email)
@@ -55,7 +61,10 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Dict[st
         "情報をご確認のうえ再度お試しください。"
     )
 
-    if not user or not verify_password(payload.password, user.password_hash):
+    credential_hash = user.password_hash if user else DUMMY_PASSWORD_HASH
+    password_valid = verify_password(payload.password, credential_hash)
+
+    if not user or not password_valid:
         error_response, status_code = create_error_response(
             error_message=generic_error, error_code="INVALID_CREDENTIALS", status_code=401
         )
@@ -74,7 +83,7 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Dict[st
         )
         raise HTTPException(status_code=status_code, detail=error_response)
 
-    session = repo.create_session(user.id)
+    session, raw_token = repo.create_session(user.id)
     repo.touch_last_login(user.id)
 
     logger.info(
@@ -88,7 +97,7 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Dict[st
     )
 
     return {
-        "session_token": session.token,
+        "session_token": raw_token,
         "expires_at": session.expires_at.isoformat(),
         **_user_payload(user, repo),
     }

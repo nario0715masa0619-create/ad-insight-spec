@@ -148,13 +148,22 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
   （NULL可。NULLは「上書きなし、プランまたは既定値に従う」を意味する）。実効上限は
   「個別上書き(company.monthly_credit_limit) > 紐づいたプランの
   monthly_credit_limit（有効な場合のみ） > 既定のフォールバック値(100)」の優先順位で
-  `MonitorRepository.resolve_monthly_credit_limit()` が解決する。
+  `MonitorRepository.resolve_monthly_credit_limit()` が解決する（`describe_limit_source()`
+  で `override`/`plan:<code>`/`plan:<code>(inactive)`/`fallback` のどれに該当するかを
+  CLI・管理APIの両方が同じロジックで判定する）。`0` は「アカウントは有効なまま今月の
+  分析だけ完全に止める」という正当な値として扱う（`is_active=false`によるアカウント
+  停止とは別軸）。
 - `monitor_users`: 招待されたユーザー。自由登録経路は存在せず、管理者/CLIのみが作成可能。
 - `credit_usage_logs`: クレジット消費ログ。分析が成功した時のみ行が作られる
   （「実行前チェック→成功時のみ消費確定」方式のため、失敗した分析は一切現れない）。
   当月の利用量はこのテーブルを都度集計して求め、集計用のスナップショットは持たない。
+  **既知の制約**: 残量チェックと消費確定の間に排他制御が無いため、同一会社への
+  同時リクエストが上限をわずかに超過しうる（詳細:
+  [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)）。
 - `monitor_sessions`: サーバー保持のログインセッション（署名付きトークンではなくDB行として管理し、
-  停止時に即時失効できるようにしている）。
+  停止時に即時失効できるようにしている）。`token_hash`列にはセッショントークンの
+  SHA-256ハッシュのみを保存し、生トークンはDBに残さない（レビュー対応: 平文保存だと
+  DB漏洩時に即座に悪用可能だったため）。
 
 **複合キー戦略:**
 - Primary Key: `(asset_id, version)`

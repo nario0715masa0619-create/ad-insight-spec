@@ -139,6 +139,41 @@ class TestClearOverride:
         assert repo.resolve_monthly_credit_limit(updated) == 300
 
 
+class TestDescribeLimitSource:
+    """CLI(manage_monitor_accounts.py)とAdmin API(admin.py)の両方が共有する
+    MonitorRepository.describe_limit_source() のテスト（レビュー指摘: 二重実装の解消）。"""
+
+    def test_override_takes_precedence(self, repo):
+        plan = repo.create_plan(code="growth-src", name="Growth", monthly_credit_limit=300)
+        company = _make_company(repo, slug="src-override", monthly_credit_limit=50, plan_id=plan.id)
+        assert repo.describe_limit_source(company) == "override"
+
+    def test_zero_override_is_still_reported_as_override(self, repo):
+        """0は「上書きなし」ではなく明示的な上書き値として扱われること
+        （company.monthly_credit_limit is not None で判定しているため）。"""
+        company = _make_company(repo, slug="src-zero-override", monthly_credit_limit=0, plan_id=None)
+        assert repo.describe_limit_source(company) == "override"
+
+    def test_plan_reported_when_no_override(self, repo):
+        plan = repo.create_plan(code="pro-src", name="Pro", monthly_credit_limit=650)
+        company = _make_company(repo, slug="src-plan", monthly_credit_limit=None, plan_id=plan.id)
+        assert repo.describe_limit_source(company) == "plan:pro-src"
+
+    def test_inactive_plan_reported_distinctly(self, repo):
+        plan = repo.create_plan(code="legacy-src", name="Legacy", monthly_credit_limit=100)
+        repo.update_plan(plan.id, is_active=False)
+        company = _make_company(repo, slug="src-inactive", monthly_credit_limit=None, plan_id=plan.id)
+        assert repo.describe_limit_source(company) == "plan:legacy-src(inactive)"
+
+    def test_dangling_plan_id_reported_with_placeholder(self, repo):
+        company = _make_company(repo, slug="src-dangling", monthly_credit_limit=None, plan_id=999999)
+        assert repo.describe_limit_source(company) == "plan:?(inactive)"
+
+    def test_fallback_when_neither_override_nor_plan(self, repo):
+        company = _make_company(repo, slug="src-fallback", monthly_credit_limit=None, plan_id=None)
+        assert repo.describe_limit_source(company) == "fallback"
+
+
 class TestPlanCrud:
     def test_create_and_get_plan_by_code(self, repo):
         plan = repo.create_plan(
