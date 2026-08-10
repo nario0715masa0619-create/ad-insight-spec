@@ -9,6 +9,11 @@
 
 **関連Issue**: [#95 chore: Streamlit auth state管理の残論点整理（PR #93 follow-up）](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/95)
 
+**更新（Issue #95 fast follow対応済み）**: 本ドキュメントが「fast follow推奨」としていた
+2点（再ログイン導線の追加、AppTestベースのテスト整備）を実施しました。詳細は
+「Issue #95 fast follow対応内容」章を参照してください。ページリロード・複数タブ等の
+`documented known limitation`区分の項目は、今回も引き続き未対応のままです（意図的）。
+
 ## 今回修正した不具合の要約
 
 ### 何が問題だったか
@@ -55,12 +60,80 @@ api_session = st.session_state["api_session"]
 経てからの分析実行が実際に200 OKで完了し、クレジットが正しく消費されることまで
 確認済みです。
 
-## 修正済み範囲
+## 修正済み範囲（PR #93）
 
 - ✅ ログイン後、複数rerunを経ても認証ヘッダーが失われない
 - ✅ 別ブラウザセッション間で`requests.Session`インスタンス自体が分離された
   （＝Authorizationヘッダーの混入経路が閉じた）
 - ✅ ログイン→分析実行→ログアウトの一連の流れを実ブラウザで確認済み
+
+## Issue #95 fast follow対応内容（今回追加）
+
+「優先度付け」でfast follow推奨としていた2点を実施しました。
+
+### 1. 再ログイン導線の追加
+
+`frontend/auth_helpers.py`（新規、Streamlitランタイム非依存の純粋関数モジュール）に
+`reauth_message_for_response(response)`を切り出し、`backend/app/api/deps.py::
+get_current_user()`が返す4種のerror_code（`SESSION_EXPIRED`/`ACCOUNT_DISABLED`/
+`COMPANY_DISABLED`/`UNAUTHORIZED`）それぞれに対応する案内文を用意しました。
+
+`streamlit_app.py`側には`handle_reauth_if_needed(response)`を追加し、401かつ
+上記いずれかのerror_codeの場合に、認証状態（`auth_token`/`auth_user`/
+Authorizationヘッダー）をクリアし、`st.session_state["auth_reauth_message"]`に
+案内文をセットします。`render_login_gate()`はこのメッセージを検出すると、
+ログインフォームの直上に`st.warning`で一度だけ表示してからクリアします。
+
+**適用した箇所**（「壊れたら困る流れ」＝主要な保護画面・操作を優先し、全17箇所の
+`api_session.*`呼び出しのうち以下9箇所に適用）:
+
+- 分析実行（`run_analyze_with_progress`の結果ハンドリング、バッチループ内）
+- 分析結果の削除（`render_asset_detail`の削除確認ダイアログ）
+- 保存済み結果の一覧取得・詳細取得
+- 検証機能の新規案件登録・案件一覧取得・案件詳細取得
+
+**意図的に対象外とした箇所**: 検証機能の案件詳細画面内の書き込み系サブ操作
+（提案評価の保存 `patch_response`、提案追加 `add_response`、followup保存
+`fu_response`、計3箇所）。理由: これらは案件詳細画面を開けた時点で既にセッションが
+有効であることが確認されているため、その直後にセッションが切れる確率は低く、
+「壊れたら困る流れ」の優先度としては主要な一覧・詳細取得より低いと判断しました
+（大規模リファクタを避け、今回のPRスコープを保つための意図的な線引きです）。
+これらの3箇所は今後の`documented known limitation`として残します。
+
+**実地検証で判明した付随事項**: `backend/app/api/deps.py::get_current_user()`は
+`get_valid_session(token)`を先に評価し、それが`None`を返した時点で
+`SESSION_EXPIRED`を返す実装になっています。`get_valid_session()`のクエリ自体が
+（実装上）非アクティブユーザーのセッションも「無効」として扱うため、
+**「管理者がアカウントを無効化した」ケースでも、実際にフロントエンドが受け取る
+error_codeは`ACCOUNT_DISABLED`ではなく`SESSION_EXPIRED`になる**ことを、隔離DBでの
+実ブラウザ検証（`deactivate-user`実行→一覧取得ボタン押下）で確認しました。
+表示される案内文の文言が実態と少しずれます（「アカウントが無効化されています」では
+なく「セッションの有効期限が切れました」と出る）が、いずれにせよ**再ログイン画面へは
+正しく戻ります**。バックエンドの認証仕様は今回のスコープ外のため、error_code判定
+順序の是正はここでは行わず、既知の細部として記録するに留めます。
+
+### 2. AppTest / ユニットテストの追加
+
+- `frontend/tests/test_auth_helpers.py`: `reauth_message_for_response()`の
+  ユニットテスト（11ケース。Streamlitランタイム不要、`pytest`で高速に実行できる）
+- `frontend/tests/test_auth_state_apptest.py`: `streamlit.testing.v1.AppTest`を
+  使ったシナリオテスト（10ケース）。`st.session_state["api_session"]`へ
+  フェイクセッション（実HTTP通信を行わない軽量スタブ）を注入することで、
+  実際のFastAPIバックエンドに依存せず認証フローを再現しています。カバーする
+  シナリオ:
+  - 未ログイン状態では保護画面（タブ）が一切描画されない
+  - 誤ったパスワードでログインに失敗した場合、保護画面に進めない
+  - 正常ログイン後、`auth_token`/`auth_user`がセットされ保護画面が描画される
+  - **`api_session`のオブジェクト同一性がrerunをまたいで保持される**
+    （PR #93で修正した回帰の核心を直接検証する回帰テスト）
+  - ログイン後、Authorizationヘッダーが正しくセットされる
+  - ログアウトで認証状態がクリアされ、ログイン画面に戻る
+  - 401（`SESSION_EXPIRED`/`ACCOUNT_DISABLED`/`COMPANY_DISABLED`）受信時に
+    認証状態がクリアされ、対応する案内文が表示される（一覧取得・削除の2経路）
+
+いずれもモック済みのHTTPクライアントのみに依存し、実バックエンド・実ネットワークへの
+依存が無いため、fragileになりにくい構成にしています。実行方法:
+`pytest frontend/tests/`（リポジトリルートから、追加のPYTHONPATH設定不要）。
 
 ## 残論点（未解決・要検討）
 
@@ -77,23 +150,20 @@ api_session = st.session_state["api_session"]
 - ネットワーク瞬断等でWebSocketが切れて再接続した場合も同様にログイン状態を失う
   可能性がある（Streamlitの再接続時の挙動に依存し、今回未検証）
 
-### 2. サーバー側でセッションが無効化された場合の検知・再ログイン導線が無い
-`st.session_state.get("auth_token")`の存在チェックだけでログイン済みと判定して
-おり、**そのトークンがサーバー側で実際にまだ有効かどうかは確認していません**。
-以下のケースでは、ユーザーはログイン中のUIを見ているのに、あらゆる操作が
-エラーになる状態に陥ります。
+### 2. ✅ 対応済み（Issue #95 fast follow）: サーバー側でセッションが無効化された場合の検知・再ログイン導線
 
-- 管理者が該当ユーザー/会社を無効化した（`ACCOUNT_DISABLED` / `COMPANY_DISABLED`）
-- セッションの有効期限（発行から2週間、`docs/MONITOR_BETA_OPERATION.md`参照）が切れた
-  （`SESSION_EXPIRED`）
-- 何らかの理由でセッショントークン自体がDBから削除された
+> 以前の記述: 「`st.session_state.get("auth_token")`の存在チェックだけでログイン済みと
+> 判定しており、フロントエンド側には401のエラーコードを見て『ログイン画面に戻す』
+> 処理が一切ない」という残論点でしたが、上記「Issue #95 fast follow対応内容」の
+> とおり解消しました。主要9箇所（分析実行・削除・一覧/詳細取得・検証機能の主要操作）で
+> 401検知→認証状態クリア→再ログイン導線が動作することを実ブラウザ・AppTest両方で
+> 確認済みです。
 
-現状、`backend/app/api/deps.py::get_current_user()`はこれらを区別した
-エラーコード（`SESSION_EXPIRED`/`ACCOUNT_DISABLED`/`COMPANY_DISABLED`）付きで
-401を返していますが、**フロントエンド側にはこれらのエラーコードを見て
-「ログイン画面に戻す」処理が一切ありません**（`grep`で確認、該当箇所0件）。
-ユーザーは各操作ごとに`render_api_exception`相当の汎用エラー文言を見るだけで、
-「再ログインすれば直る」ことに気づきにくい導線になっています。
+**部分的に残る範囲**: 検証機能の案件詳細画面内の書き込み系サブ操作（提案評価保存・
+提案追加・followup保存、計3箇所）は今回は対象外としました（理由は上記参照）。
+これらの箇所でセッションが切れた場合、ユーザーは`render_api_exception`相当の
+汎用エラー文言を見るのみで、自動的にはログイン画面へ戻りません（ページを手動で
+リロードするか、他の一覧/詳細取得操作を行った時点で再ログイン導線に入ります）。
 
 ### 3. 複数タブ・複数ユーザーの挙動は未検証
 今回の修正により、**別ブラウザセッション間での`Session`共有（＝トークン混入）は
@@ -135,29 +205,38 @@ api_session = st.session_state["api_session"]
 共通処理を、API呼び出し結果のハンドリング（現状複数箇所に散らばっている）に
 差し込むことが望ましいです。
 
-### テスト不足領域
-Streamlit UIの認証状態管理（`api_session`の永続化、ログイン/ログアウトの
-往復、rerunをまたいだヘッダー保持）を検証する自動テストは**現状ゼロ**です
-（このリポジトリには`streamlit.testing.v1.AppTest`ベースのテストが1件も
-存在しません）。今回の修正確認は実ブラウザでの手動確認のみに依存しており、
-将来同種のリグレッションが再発しても自動テストでは検知できません。
+### ✅ 対応済み（Issue #95 fast follow）: テスト不足領域
+> 以前の記述: 「Streamlit UIの認証状態管理を検証する自動テストは現状ゼロ」という
+> 残論点でしたが、上記「Issue #95 fast follow対応内容」のとおり、`AppTest`ベースの
+> シナリオテスト10件・純粋関数のユニットテスト11件、計21件を追加しました。
 
-## 優先度付け
+**部分的に残る範囲**: 追加したテストは「ログイン→一覧取得/削除→401→再ログイン」の
+往復を検証するもので、分析実行フロー（`run_analyze_with_progress`のバックグラウンド
+スレッド経由）自体をAppTestで完全に駆動するテストは含めていません（`analysis_result`を
+`session_state`へ直接注入することで削除フローのテストのみ間接的にカバーしています）。
+ファイルアップロードを伴う分析実行の完全なE2Eは、引き続き実ブラウザでの手動確認に
+依存しています。
 
-| 論点 | 優先度 | 理由 |
+## 優先度付け（更新後）
+
+| 論点 | 優先度 | 状態 |
 |---|---|---|
-| 残論点2（セッション無効時の再ログイン導線が無い） | **fast follow推奨** | ユーザーが「なぜ失敗するか分からず詰む」実運用上のUX問題に直結する。招待制ベータでアカウント無効化・セッション期限切れは実際に起こりうる |
-| テスト不足領域（AppTestの導入） | **fast follow推奨** | 今回のバグが「実ブラウザで初めて発覚した」ことの再発防止。ただしAppTest導入自体は一定規模の作業になるため、まず認証まわりだけでも最小限のケースを持つことを推奨 |
-| 残論点1（ページリロードでログイン状態消失） | documented known limitation でよい | Streamlitの設計上の制約であり、Cookie等での永続化は別の実装コストとセキュリティ検討を要する。現状は「毎回ログインが必要」という仕様として許容可能 |
-| 残論点3（複数タブ・複数ユーザーの実地検証） | documented known limitation でよい | 今回の修正でセッション間の混在リスク自体は解消済み。実地検証は次にUIへ大きく手を入れるタイミングで併せて行えば十分 |
-| auth/session管理責務の分離 | documented known limitation でよい | 現状の規模では緊急性は低い。ログイン関連処理がさらに増えるタイミングでリファクタする |
+| 残論点2（セッション無効時の再ログイン導線が無い） | fast follow推奨 | ✅ **対応済み**（主要9箇所。検証機能の書き込み系サブ操作3箇所は対象外として残存） |
+| テスト不足領域（AppTestの導入） | fast follow推奨 | ✅ **対応済み**（AppTest 10件 + ユニットテスト11件。分析実行フロー自体のAppTest駆動は未対応） |
+| 検証機能の書き込み系サブ操作3箇所への再ログイン導線 | documented known limitation でよい | 未対応（今回意図的に対象外。上記参照） |
+| 残論点1（ページリロードでログイン状態消失） | documented known limitation でよい | 未対応（Streamlitの設計上の制約、対応不要と判断） |
+| 残論点3（複数タブ・複数ユーザーの実地検証） | documented known limitation でよい | 未対応（セッション間混在リスク自体は解消済み、実地検証は据え置き） |
+| auth/session管理責務の分離 | documented known limitation でよい | 未対応（現状の規模では緊急性は低い） |
+| backend `get_current_user()`のerror_code判定順序（SESSION_EXPIRED優先でACCOUNT_DISABLEDに到達しない） | documented known limitation でよい | 未対応（今回のスコープ外。バックエンド認証仕様の変更を伴うため別Issueで検討） |
 
 ## 推奨次アクション
 
-1. （fast follow）401かつ`error_code`が`SESSION_EXPIRED`/`ACCOUNT_DISABLED`/
-   `COMPANY_DISABLED`の場合に、認証状態をクリアしてログイン画面へ戻す共通処理を追加する
-2. （fast follow）最低限、ログイン→API呼び出し→ログアウトの往復を検証する
-   `streamlit.testing.v1.AppTest`ベースのテストを1本用意する
-3. （documented known limitation、当面対応不要）ページリロードでのログイン状態消失、
-   複数タブ/複数ユーザーの実地検証、auth/session管理責務の分離は、本ドキュメントに
-   記録した上で、次にログイン関連処理へ大きく手を入れるタイミングまで据え置く
+1. ~~（fast follow）401かつ`error_code`が...の場合に再ログイン導線を追加する~~ → **完了**
+2. ~~（fast follow）AppTestベースのテストを用意する~~ → **完了**
+3. （次点・任意）検証機能の書き込み系サブ操作3箇所（提案評価保存・提案追加・
+   followup保存）にも同じ`handle_reauth_if_needed()`を適用する（既存の実装
+   パターンをそのまま複製するだけなので、着手コストは低い）
+4. （documented known limitation、当面対応不要）ページリロードでのログイン状態消失、
+   複数タブ/複数ユーザーの実地検証、auth/session管理責務の分離、backendの
+   error_code判定順序は、本ドキュメントに記録した上で、次にログイン/認証関連処理へ
+   大きく手を入れるタイミングまで据え置く
