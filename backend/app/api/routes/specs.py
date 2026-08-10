@@ -112,6 +112,7 @@ def _build_decision_support_diff(
 async def analyze(
     input_file: UploadFile = File(...),
     lp_file: Optional[UploadFile] = None,
+    lp_url: Optional[str] = Form(None),
     kpi_file: Optional[UploadFile] = None,
     mode: str = Form("file_plus_lp_plus_manual_kpi"),
     asset_name: Optional[str] = Form(None),
@@ -121,11 +122,21 @@ async def analyze(
     """
     ファイルをアップロードして分析を実行
 
+    CampaignPilotの主入力は「Meta Ads CSV（`kpi_file`）+ 広告クリエイティブ
+    （`input_file`）+ LP（`lp_url`または`lp_file`）」の3点（詳細:
+    docs/plans/primary_input_redesign.md）。手入力KPI（JSON形式の`kpi_file`）は
+    Meta Ads CSVが無い場合の補助的な入力手段として引き続き利用できる。
+
     **入力**:
-    - `input_file`: 素材ファイル（image/video/text）[必須]
-    - `lp_file`: LP ファイル（HTML） [オプション]
-    - `kpi_file`: KPI ファイル（JSON） [オプション]
-    - `mode`: 入力モード [デフォルト: file_plus_lp_plus_manual_kpi]
+    - `input_file`: 広告クリエイティブ（image/video）[必須]
+    - `lp_url`: LPのURL（http/https） [オプション、`lp_file`との併用時はこちらを優先]
+    - `lp_file`: LP ファイル（HTML、`lp_url`未指定時のフォールバック） [オプション]
+    - `kpi_file`: Meta Ads CSV（推奨）または KPI JSON（補助的な手入力） [オプション]
+    - `mode`: 入力モード [デフォルト: file_plus_lp_plus_manual_kpi（標準・推奨）]
+        - `file_plus_lp_plus_manual_kpi`: クリエイティブ + LP + KPI（標準）
+        - `file_plus_kpi`: クリエイティブ + KPI（LPなし・広告面分析）
+        - `file_plus_lp`: クリエイティブ + LP（KPIなし）
+        - `file_only`: クリエイティブのみ（最小・簡易分析）
     - `asset_name`: 広告名/キャンペーン名 [オプション、未指定時はアップロードファイル名にフォールバック]
 
     **出力**:
@@ -135,7 +146,7 @@ async def analyze(
     - 400: 入力ファイル形式エラー
     - 401: 未ログイン/セッション無効
     - 403: 当月のクレジット上限に到達（この分析に必要なクレジットが残量を超える）
-    - 422: 未対応のmode（`file_only` / `file_plus_lp` / `file_plus_lp_plus_manual_kpi` 以外）
+    - 422: 未対応のmode、または選択したmodeに対して`lp_url`/`lp_file`/`kpi_file`が不足
     - 500: 分析エラー
 
     **クレジット消費について**:
@@ -150,6 +161,14 @@ async def analyze(
                 f"未対応のmodeです: '{mode}'。"
                 f"{'/'.join(sorted(VALID_ANALYZE_MODES))} のいずれかを指定してください。"
             ),
+            error_code="VALIDATION_ERROR",
+            status_code=422,
+        )
+        raise HTTPException(status_code=status_code, detail=error_response)
+
+    if lp_url and not (lp_url.startswith("http://") or lp_url.startswith("https://")):
+        error_response, status_code = create_error_response(
+            error_message=f"lp_urlはhttp://またはhttps://で始まるURLを指定してください: '{lp_url}'",
             error_code="VALIDATION_ERROR",
             status_code=422,
         )
@@ -199,27 +218,33 @@ async def analyze(
                 content = await input_file.read()
                 f.write(content)
             
-            # lp_file 保存（オプション）
-            if lp_file:
+            # lp_file 保存（オプション。lp_url が指定されている場合はそちらを優先し、
+            # ファイル保存自体を行わない）
+            if lp_file and not lp_url:
                 lp_path = Path(temp_dir) / lp_file.filename
                 with open(lp_path, "wb") as f:
                     content = await lp_file.read()
                     f.write(content)
-            
+
             # kpi_file 保存（オプション）
             if kpi_file:
                 kpi_path = Path(temp_dir) / kpi_file.filename
                 with open(kpi_path, "wb") as f:
                     content = await kpi_file.read()
                     f.write(content)
-            
+
             # asset_name 未指定時は、アップロードファイル名（拡張子除く）にフォールバックする
             resolved_asset_name = asset_name or Path(input_file.filename).stem
+
+            # lp_url が指定されていればURL文字列をそのまま、なければ lp_file の
+            # 保存先パスを LPService（LPService.execute は http/https URL とローカル
+            # ファイルパスの両方を受け付ける）へ渡す。
+            resolved_lp_input = lp_url if lp_url else (str(lp_path) if lp_path else None)
 
             # === Orchestrator で分析実行 ===
             orchestrator = AnalysisOrchestrator(
                 input_path=str(input_path),
-                lp_input=str(lp_path) if lp_path else None,
+                lp_input=resolved_lp_input,
                 kpi_path=str(kpi_path) if kpi_path else None,
                 mode=mode,
                 asset_name=resolved_asset_name,

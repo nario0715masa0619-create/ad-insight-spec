@@ -1,8 +1,16 @@
-# Meta Ads CSV インポートガイド（Phase 1）
+# Meta Ads CSV インポートガイド
+
+CampaignPilot の主入力は **Meta Ads CSV（数値の根拠）+ 広告クリエイティブ（訴求・表現の根拠）+
+LP（遷移先体験の根拠）** の3点です（設計の詳細: [主入力の再定義メモ](plans/primary_input_redesign.md)）。
+本ドキュメントは、そのうち数値（KPI）を取り込むための主要な手段である **Meta Ads CSV** の
+使い方を説明します。
 
 CampaignPilot は、Meta Ads Manager からエクスポートした CSV を **列の並べ替えや削除、値の整形をせずにそのまま** アップロードして、KPI（インプレッション・クリック・消化金額・結果など）を取り込めます。
 
-これは既存の「KPIファイル（JSON）を手入力する」フロー（`file_plus_lp_plus_manual_kpi` モード）に、CSVという新しい入力手段を追加したものです。手入力(JSON)フロー自体は変更されておらず、引き続き利用できます。
+CSVは `file_plus_lp_plus_manual_kpi`（標準・推奨: クリエイティブ+LP+CSV）と
+`file_plus_kpi`（LPなし・広告面分析: クリエイティブ+CSV）の2モードで利用できます。
+KPIファイル（JSON）を手入力するフローも引き続き利用できますが、これは **CSVが手元にない
+場合の補助的な入力手段** という位置づけです（数値入力の主手段はCSV）。
 
 ## 何をアップロードすればよいか
 
@@ -12,7 +20,10 @@ Meta Ads Manager の「エクスポート」機能で書き出した CSV ファ�
 - 不要な列を削除する必要はありません（対応外の列は自動的に無視されます）
 - 値を整形（カンマや%記号の除去など）する必要はありません
 
-Streamlit UI の「新規分析」タブで、モードを `file_plus_lp_plus_manual_kpi` に設定すると、KPI入力方法として「Meta Ads CSV（そのままアップロード・推奨）」を選択できます。
+Streamlit UI の「新規分析」タブで、分析パターンを「🌟 標準（推奨）: CSV + クリエイティブ + LP」
+（`file_plus_lp_plus_manual_kpi`）または「CSV + クリエイティブ（LPなし・広告面分析）」
+（`file_plus_kpi`）に設定すると、①のセクションでKPI入力方法として
+「Meta Ads CSV（そのままアップロード・推奨）」を選択できます。
 
 ## 対応している列（Phase 1）
 
@@ -66,17 +77,20 @@ Meta Ads Manager のCSVは、日別内訳など複数行にわたってエクス
 | 列は見つかったが値が数値として読み取れない | `META_ADS_CSV_UNREADABLE_VALUES` | セルが空欄になっていないか確認してください |
 | 文字コードを判定できない | `META_ADS_CSV_ENCODING_ERROR` | UTF-8 または Shift_JIS(CP932) で保存し直してください |
 
-いずれの場合も、KPI入力方法を「JSONで手入力（従来方式）」に切り替えることで分析を継続できます。
+いずれの場合も、KPI入力方法を「JSONで手入力（補助的な方法）」に切り替えることで分析を継続できます。
 
 ## 手入力(JSON)との違い
 
-| | Meta Ads CSV（本機能） | JSON手入力（従来） |
+CSVはCampaignPilotの主入力（数値の根拠）としての推奨手段、JSON手入力はCSVが手元にない
+場合の補助的な入力手段という位置づけです。
+
+| | Meta Ads CSV（推奨・主入力） | JSON手入力（補助） |
 |---|---|---|
 | 入力形式 | Meta Ads Managerエクスポートそのまま | `{"impressions": ..., "clicks": ...}` 形式のJSON |
 | 列名の変換 | 自動（日本語/英語の主要パターン） | 不要（すでに内部フィールド名で記述） |
 | 粒度判定 | 自動（campaign/adset/ad） | なし |
 | 複数行の扱い | 自動合算 | 非対応（単一のKPIセットのみ） |
-| 向いているケース | Meta Ads Managerから直接エクスポートできる場合 | KPIを他システムから個別に転記する場合 |
+| 向いているケース | Meta Ads Managerから直接エクスポートできる場合（基本はこちら） | CSVが手元になく、KPIを他システムから個別に転記する場合 |
 
 ## 非対応（今回のスコープ外）
 
@@ -93,4 +107,8 @@ Meta Ads Manager のCSVは、日別内訳など複数行にわたってエクス
 - テスト: [`backend/tests/test_meta_ads_csv_service.py`](../backend/tests/test_meta_ads_csv_service.py)、[`backend/tests/test_orchestrator_meta_ads_csv_wiring.py`](../backend/tests/test_orchestrator_meta_ads_csv_wiring.py)
 - サンプルCSV（ダミーデータ）: [`sample_data/meta_ads_csv/`](../sample_data/meta_ads_csv/)
 
-既存の `POST /api/v1/specs/analyze` エンドポイントの `kpi_file` パラメータはそのままで、ファイル拡張子（`.csv` / `.json`）で自動的に処理方式が切り替わります。API自体に新しいパラメータは追加していません。
+`POST /api/v1/specs/analyze` エンドポイントの `kpi_file` パラメータはそのままで、ファイル拡張子（`.csv` / `.json`）で自動的に処理方式が切り替わります。
+
+主入力の再定義（[主入力の再定義メモ](plans/primary_input_redesign.md)）にあわせて、`mode`パラメータに
+`file_plus_kpi`（クリエイティブ + CSV/KPI、LPなし）を追加し、LPを直接URL文字列で渡せる
+`lp_url`パラメータ（`lp_file`より優先）を追加しました。`kpi_file`自体の挙動（CSV/JSON振り分け）は変更していません。

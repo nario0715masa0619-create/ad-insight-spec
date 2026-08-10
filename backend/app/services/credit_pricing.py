@@ -11,6 +11,9 @@ from app.config import Settings, get_settings
 _MODE_TO_TIER = {
     "file_only": "light",
     "file_plus_lp": "standard",
+    # LPなし・クリエイティブ+KPI(CSV/JSON)のみの「広告面分析」。file_plus_lpと
+    # 同じく「クリエイティブに1層追加」の構成のためstandard扱いとする。
+    "file_plus_kpi": "standard",
     "file_plus_lp_plus_manual_kpi": "heavy",
 }
 

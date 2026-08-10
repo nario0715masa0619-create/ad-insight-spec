@@ -38,6 +38,9 @@ class InputModeEnum(str, Enum):
     """入力モード"""
     FILE_ONLY = "file_only"
     FILE_PLUS_LP = "file_plus_lp"
+    # クリエイティブ + KPI（CSV/JSON）、LPなし。「広告面のみの分析」用
+    # （CampaignPilotの主入力＝CSV+クリエイティブ+LPのうち、LPを持たないケース）。
+    FILE_PLUS_KPI = "file_plus_kpi"
     FILE_PLUS_LP_PLUS_MANUAL_KPI = "file_plus_lp_plus_manual_kpi"
     API_IMPORT_READY = "api_import_ready"
 
@@ -607,6 +610,13 @@ class AdInsightSpec(BaseModel):
                     raise ValueError("landing_page is required in file_plus_lp mode")
                 if performance is not None:
                     raise ValueError("performance must be null in file_plus_lp mode")
+
+            # file_plus_kpi: landing_page は null、performance は必須
+            elif mode == InputModeEnum.FILE_PLUS_KPI:
+                if landing_page is not None:
+                    raise ValueError("landing_page must be null in file_plus_kpi mode")
+                if performance is None:
+                    raise ValueError("performance is required in file_plus_kpi mode")
 
             # file_plus_lp_plus_manual_kpi: 全て必須
             elif mode == InputModeEnum.FILE_PLUS_LP_PLUS_MANUAL_KPI:

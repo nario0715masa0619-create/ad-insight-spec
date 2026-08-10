@@ -279,3 +279,86 @@ class TestMetaAdsCsvErrorHandling:
 
         assert response.status_code == 422
         assert response.json()["detail"]["error_code"] != "ANALYSIS_ERROR"
+
+
+class TestLpUrlInput:
+    """
+    主入力の再定義（docs/plans/primary_input_redesign.md）で追加した lp_url
+    フォームパラメータ。LP を「URL文字列」として直接渡せること、lp_file との
+    併用時は lp_url を優先すること、不正なURL形式は422で弾かれることを検証する。
+    """
+
+    def _spec_dict(self):
+        d = _minimal_valid_spec_dict(asset_id="asset_lp_url_test")
+        d["input_metadata"]["mode"] = "file_plus_lp"
+        d["_metadata"]["input_mode"] = "file_plus_lp"
+        d["landing_page"] = {"url": "https://example.com/lp"}
+        return d
+
+    def test_lp_url_is_passed_to_orchestrator_as_lp_input(self, client):
+        spec_dict = self._spec_dict()
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp", "lp_url": "https://example.com/lp"},
+            )
+
+        assert response.status_code == 200
+        assert mock_orchestrator_cls.call_args.kwargs["lp_input"] == "https://example.com/lp"
+
+    def test_lp_url_takes_precedence_over_lp_file(self, client):
+        """lp_url と lp_file が両方指定された場合、lp_url を優先しファイル保存自体を行わないこと"""
+        spec_dict = self._spec_dict()
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={
+                    "input_file": ("test.png", b"fake-image-bytes", "image/png"),
+                    "lp_file": ("lp.html", b"<html></html>", "text/html"),
+                },
+                data={"mode": "file_plus_lp", "lp_url": "https://example.com/lp"},
+            )
+
+        assert response.status_code == 200
+        assert mock_orchestrator_cls.call_args.kwargs["lp_input"] == "https://example.com/lp"
+
+    def test_invalid_lp_url_scheme_returns_422(self, client):
+        response = client.post(
+            "/api/v1/specs/analyze",
+            files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+            data={"mode": "file_plus_lp", "lp_url": "example.com/lp"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["error_code"] == "VALIDATION_ERROR"
+
+
+class TestFilePlusKpiMode:
+    """
+    主入力の再定義で追加した file_plus_kpi モード（クリエイティブ + KPI、LPなし・
+    広告面分析）が、/analyze エンドポイントで受理されエンドツーエンドで動作することの
+    回帰テスト。スキーマレベルの詳細な検証は test_input_mode_schema.py を参照。
+    """
+
+    def test_file_plus_kpi_mode_is_accepted(self, client):
+        spec_dict = _minimal_valid_spec_dict(asset_id="asset_file_plus_kpi_test")
+        spec_dict["input_metadata"]["mode"] = "file_plus_kpi"
+        spec_dict["_metadata"]["input_mode"] = "file_plus_kpi"
+        spec_dict["performance"] = {"impressions": 1000, "clicks": 10}
+
+        with patch.object(specs_module.AnalysisOrchestrator, "run", return_value=spec_dict):
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={
+                    "input_file": ("test.png", b"fake-image-bytes", "image/png"),
+                    "kpi_file": ("kpi.csv", b"impressions,clicks\n1000,10\n", "text/csv"),
+                },
+                data={"mode": "file_plus_kpi"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["performance"]["impressions"] == 1000
+        assert response.json()["landing_page"] is None

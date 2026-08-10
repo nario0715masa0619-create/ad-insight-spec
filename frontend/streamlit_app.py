@@ -11,7 +11,21 @@ from datetime import datetime
 # ログイン後は Authorization ヘッダーをここに一度セットするだけで
 # /analyze・一覧・詳細・削除・検証APIすべてに自動で乗る（呼び出し箇所ごとに
 # ヘッダーを持ち回らずに済む）。
-api_session = requests.Session()
+#
+# 重要: Streamlitはウィジェット操作のたびにスクリプト全体を再実行するため、
+# ここを単純なモジュールレベル変数（`api_session = requests.Session()`）に
+# すると、ログイン直後の1回のrerunでヘッダーを設定した直後、次のrerunで
+# この行が再実行されて真新しい Session に置き換わり、Authorizationヘッダーが
+# 消えてしまう（ログイン後の最初のクリック以降、あらゆる認証必須API呼び出しが
+# 401になる）。加えてモジュールレベル変数は同一プロセスを共有する全ブラウザ
+# セッションで共通のため、複数社が同時利用する招待制ベータでは、他社のログイン
+# トークンが自分のリクエストに乗ってしまう危険もある。
+# st.session_state（ブラウザセッションごとに独立し、rerunをまたいで保持される）
+# に Session オブジェクト自体を保持し、ここでその参照を取り直すことで、
+# 以下の17箇所の `api_session.*` 呼び出し全てを変更せずに両問題を解消する。
+if "api_session" not in st.session_state:
+    st.session_state["api_session"] = requests.Session()
+api_session = st.session_state["api_session"]
 
 
 def api_headers_set(token):
@@ -31,6 +45,10 @@ def render_login_gate() -> bool:
     描画して True を返す。
     """
     if st.session_state.get("auth_token") and st.session_state.get("auth_user"):
+        # api_session は st.session_state 経由でrerunをまたいで保持されるため
+        # 通常は不要だが、念のため毎rerunでヘッダーを保持中のトークンへ揃え直す
+        # （二重の安全策。本体の原因はapi_session自体の永続化で解消済み）。
+        api_headers_set(st.session_state["auth_token"])
         _render_sidebar_status()
         return True
 
@@ -1292,54 +1310,66 @@ restore_analysis_result_from_query_params()
 tab_new, tab_saved, tab_verify = st.tabs(["📤 新規分析", "📂 保存済み結果", "🧪 検証"])
 
 # ============ 新規分析 ============
+# CampaignPilotの主入力は「Meta Ads CSV（数値）+ 広告クリエイティブ（訴求・表現）+
+# LP（遷移先体験）」の3点（詳細: docs/plans/primary_input_redesign.md）。
+# 手入力KPI(JSON)は、CSVが手元にない場合の補助的な入力手段として位置づける。
+_MODE_OPTIONS = [
+    "file_plus_lp_plus_manual_kpi",
+    "file_plus_kpi",
+    "file_plus_lp",
+    "file_only",
+]
+_MODE_LABELS = {
+    "file_plus_lp_plus_manual_kpi": "🌟 標準（推奨）: CSV + クリエイティブ + LP",
+    "file_plus_kpi": "CSV + クリエイティブ（LPなし・広告面分析）",
+    "file_plus_lp": "クリエイティブ + LP（数値なし・簡易分析）",
+    "file_only": "クリエイティブのみ（最小・簡易分析）",
+}
+_MODE_REQUIREMENTS = {
+    "file_plus_lp_plus_manual_kpi": "必要な入力: 広告クリエイティブ + LP（URLまたはHTML） + Meta Ads CSV（またはKPI手入力）",
+    "file_plus_kpi": "必要な入力: 広告クリエイティブ + Meta Ads CSV（またはKPI手入力）。LPは対象外です。",
+    "file_plus_lp": "必要な入力: 広告クリエイティブ + LP（URLまたはHTML）。数値（CSV/KPI）は使いません。",
+    "file_only": "必要な入力: 広告クリエイティブのみ。数値・LPを使わない最小構成です。",
+}
+# 実際の消費クレジットはサーバー側の設定値が正だが、実行前に目安を示す。
+# モード⇔クレジット段階の対応は backend/app/services/credit_pricing.py と揃えている。
+_MODE_CREDIT_HINT = {
+    "file_plus_lp_plus_manual_kpi": "この分析では通常 **3クレジット** を消費します（LP分析 + 数値分析を含むため）",
+    "file_plus_kpi": "この分析では通常 **2クレジット** を消費します（数値分析を含むため）",
+    "file_plus_lp": "この分析では通常 **2クレジット** を消費します（LP分析を含むため）",
+    "file_only": "この分析では通常 **1クレジット** を消費します",
+}
+
 with tab_new:
-    st.header("ファイル分析")
+    st.header("広告分析")
+    st.caption(
+        "CampaignPilotは、**Meta Ads CSV（数値の根拠）・広告クリエイティブ（訴求・表現の根拠）・"
+        "LP（遷移先体験の根拠）** の3つをつないで、広告運用の改善判断を支援します。"
+        "3点が揃うほど、原因分析の精度が上がります。"
+    )
+
     mode = st.selectbox(
-        "モード選択",
-        ["file_only", "file_plus_lp", "file_plus_lp_plus_manual_kpi"],
+        "分析パターン",
+        _MODE_OPTIONS,
+        format_func=lambda m: _MODE_LABELS[m],
         key=widget_key("analyze", "mode_select"),
     )
+    st.caption(f"ℹ️ {_MODE_REQUIREMENTS[mode]}")
+    st.caption(f"💳 {_MODE_CREDIT_HINT[mode]}")
+    if mode != "file_plus_lp_plus_manual_kpi":
+        st.caption("👉 CSV・クリエイティブ・LPの3点が揃う「標準（推奨）」の方が、原因分析の精度が高くなります。")
 
-    mode_requirements = {
-        "file_only": "必要な入力: 画像/動画ファイル",
-        "file_plus_lp": "必要な入力: 画像/動画ファイル + LPファイル（HTML）",
-        "file_plus_lp_plus_manual_kpi": "必要な入力: 画像/動画ファイル + LPファイル（HTML） + KPI情報（Meta Ads CSV または JSON）",
-    }
-    st.caption(f"ℹ️ {mode_requirements[mode]}")
+    mode_needs_kpi = mode in ("file_plus_lp_plus_manual_kpi", "file_plus_kpi")
+    mode_needs_lp = mode in ("file_plus_lp_plus_manual_kpi", "file_plus_lp")
 
-    # 実際の消費クレジットはサーバー側の設定値が正だが、実行前に目安を示す。
-    # モード⇔クレジット段階の対応は backend/app/services/credit_pricing.py と揃えている。
-    mode_credit_hint = {
-        "file_only": "この分析では通常 **1クレジット** を消費します",
-        "file_plus_lp": "この分析では通常 **2クレジット** を消費します（LP分析を含むため）",
-        "file_plus_lp_plus_manual_kpi": "この分析では通常 **3クレジット** を消費します（LP分析 + KPI分析を含むため）",
-    }
-    st.caption(f"💳 {mode_credit_hint[mode]}")
-
-    asset_name_input = st.text_input(
-        "広告名/キャンペーン名（任意・未入力時はアップロードファイル名を使用）",
-        key=widget_key("analyze", "asset_name_input"),
-    )
-
-    uploaded_file = st.file_uploader(
-        "画像またはビデオをアップロード",
-        type=["png", "jpg", "jpeg", "mp4", "mov"],
-        key=widget_key("analyze", "file_upload", "main"),
-    )
-
-    lp_file_upload = None
+    # ---- ① Meta Ads CSV（数値の根拠） ----
     kpi_file_upload = None
     kpi_input_method = None
-    if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi"):
-        lp_file_upload = st.file_uploader(
-            "LPファイルをアップロード（HTML）",
-            type=["html", "htm"],
-            key=widget_key("analyze", "file_upload", "lp"),
-        )
-    if mode == "file_plus_lp_plus_manual_kpi":
+    if mode_needs_kpi:
+        st.markdown("#### ① Meta Ads CSV（数値の根拠）")
         kpi_input_method = st.radio(
             "KPI入力方法",
-            ["Meta Ads CSV（そのままアップロード・推奨）", "JSONで手入力（従来方式）"],
+            ["Meta Ads CSV（そのままアップロード・推奨）", "JSONで手入力（補助的な方法）"],
             key=widget_key("analyze", "kpi_input_method"),
         )
         if kpi_input_method.startswith("Meta Ads CSV"):
@@ -1353,100 +1383,187 @@ with tab_new:
                 key=widget_key("analyze", "file_upload", "kpi_csv"),
             )
         else:
-            st.caption("ℹ️ impressions/clicks等のKPIをJSON形式で直接指定する従来方式です。")
+            st.caption(
+                "ℹ️ CSVが手元にない場合の補助的な入力方法です。"
+                "impressions/clicks等のKPIをJSON形式で直接指定します。"
+            )
             kpi_file_upload = st.file_uploader(
-                "KPIファイルをアップロード（JSON）",
+                "KPIファイルをアップロード（JSON・補助入力）",
                 type=["json"],
                 key=widget_key("analyze", "file_upload", "kpi_json"),
             )
 
+    # ---- ② 広告クリエイティブ（訴求・表現の根拠） ----
+    st.markdown("#### ② 広告クリエイティブ（訴求・表現の根拠）")
+    st.caption("画像・動画をまとめて複数アップロードできます（同じCSV/LPの文脈で1件ずつ分析します）。")
+    uploaded_creative_files = st.file_uploader(
+        "画像またはビデオをアップロード（複数可）",
+        type=["png", "jpg", "jpeg", "mp4", "mov"],
+        accept_multiple_files=True,
+        key=widget_key("analyze", "file_upload", "main"),
+    )
+
+    # ---- ③ LP（遷移先体験の根拠） ----
+    lp_url_input = None
+    lp_file_upload = None
+    if mode_needs_lp:
+        st.markdown("#### ③ LP（遷移先体験の根拠）")
+        lp_input_method = st.radio(
+            "LP入力方法",
+            ["LP URL（推奨）", "LPファイルをアップロード（HTML）"],
+            key=widget_key("analyze", "lp_input_method"),
+        )
+        if lp_input_method.startswith("LP URL"):
+            lp_url_input = st.text_input(
+                "LPのURL（https://...）",
+                key=widget_key("analyze", "lp_url_input"),
+            )
+        else:
+            lp_file_upload = st.file_uploader(
+                "LPファイルをアップロード（HTML）",
+                type=["html", "htm"],
+                key=widget_key("analyze", "file_upload", "lp"),
+            )
+
+    # ---- ④ 補助情報（任意） ----
+    st.markdown("#### ④ 補助情報（任意）")
+    asset_name_input = st.text_input(
+        "広告名/キャンペーン名（任意・未入力時はアップロードファイル名を使用。複数枚アップロード時は連番を付与）",
+        key=widget_key("analyze", "asset_name_input"),
+    )
+
     missing_items = []
-    if not uploaded_file:
-        missing_items.append("画像/動画ファイル")
-    if mode in ("file_plus_lp", "file_plus_lp_plus_manual_kpi") and not lp_file_upload:
-        missing_items.append("LPファイル（HTML）")
-    if mode == "file_plus_lp_plus_manual_kpi" and not kpi_file_upload:
+    if not uploaded_creative_files:
+        missing_items.append("広告クリエイティブ（画像/動画）")
+    if mode_needs_lp and not (lp_url_input or lp_file_upload):
+        missing_items.append("LP（URLまたはHTMLファイル）")
+    if mode_needs_kpi and not kpi_file_upload:
         kpi_label = "Meta Ads CSV" if kpi_input_method and kpi_input_method.startswith("Meta Ads CSV") else "KPIファイル（JSON）"
         missing_items.append(kpi_label)
 
     if missing_items:
-        st.warning(f"⚠️ 不足している入力: {'、'.join(missing_items)}。上記をアップロードすると分析を実行できます。")
+        st.warning(f"⚠️ 不足している入力: {'、'.join(missing_items)}。上記を入力すると分析を実行できます。")
+
+    def _render_analyze_error(response) -> None:
+        try:
+            err_json = response.json()
+        except Exception:
+            err_json = None
+
+        if err_json and err_json.get("error_code") == "MONTHLY_CREDIT_LIMIT_EXCEEDED":
+            st.error(f"🚫 {err_json.get('error', '今月のクレジット残量が不足しています。')}")
+            usage = (err_json.get("details") or {}).get("usage") or {}
+            if usage:
+                st.caption(f"今月のクレジット利用: {usage.get('used')} / {usage.get('limit')} credits")
+        elif err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
+            st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
+            st.write("**次のアクション**: 不足している情報（LPやCSV/KPI等）を追加して、再度分析を実行してください。")
+        elif err_json and str(err_json.get("error_code", "")).startswith("META_ADS_CSV_"):
+            st.error(f"⚠️ Meta Ads CSVを読み取れませんでした: {err_json.get('error', '')}")
+            st.write(
+                "**次のアクション**: Meta Ads Manager のエクスポート設定を確認し、"
+                "必要な指標を含めて再エクスポートしたCSVをアップロードし直してください。"
+                "手元でKPIが分かっている場合は、上の「JSONで手入力」に切り替えることもできます。"
+            )
+        elif err_json:
+            st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
+            st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")
+        else:
+            st.error(f"❌ 分析中にエラーが発生しました（HTTP {response.status_code}）")
+
+        with st.expander(
+            "🔧 エラー詳細（デバッグ用）",
+            expanded=False,
+            key=widget_key("analyze", "expander_error_detail", idx=id(response)),
+        ):
+            st.json(err_json if err_json else {"raw_response": response.text})
 
     if st.button("🚀 分析実行", disabled=bool(missing_items), key=widget_key("analyze", "submit")):
-        if uploaded_file:
-            files = {"input_file": uploaded_file}
-            if lp_file_upload:
-                files["lp_file"] = lp_file_upload
-            if kpi_file_upload:
-                files["kpi_file"] = kpi_file_upload
-            data = {"mode": mode}
-            if asset_name_input:
-                data["asset_name"] = asset_name_input
+        if uploaded_creative_files:
+            # LP/KPIファイルは複数のクリエイティブに対して使い回すため、生バイト列を
+            # 一度だけ読み出しておく（同じアップロード済みファイルオブジェクトを
+            # そのまま複数回requestsに渡すと、2回目以降は読み取り済みで空になる）。
+            lp_bytes = lp_file_upload.getvalue() if lp_file_upload else None
+            lp_filename = lp_file_upload.name if lp_file_upload else None
+            kpi_bytes = kpi_file_upload.getvalue() if kpi_file_upload else None
+            kpi_filename = kpi_file_upload.name if kpi_file_upload else None
+            kpi_content_type = "text/csv" if (kpi_filename or "").lower().endswith(".csv") else "application/json"
 
-            response, exception = run_analyze_with_progress(files, data)
+            batch_results = []  # [(filename, "success"/"error", asset_id_or_None)]
+            stopped_early = False
 
-            if exception is not None:
-                # 前回成功時の analysis_result が残ったままだと、今回のエラー
-                # メッセージの下に古い分析結果（5軸診断の全パネル）が
-                # そのまま居座り、「エラーなのに結果が出ている」矛盾した画面になる。
-                # URL の query params（result_asset_id/result_version）も、失敗した
-                # この試行を指したまま残さないようクリアする。
-                st.session_state["analysis_result"] = None
-                clear_analysis_result_query_params()
-                render_api_exception(exception)
-            elif response.status_code == 200:
-                st.success("✅ 分析完了")
-                result = response.json()
-                st.session_state["analysis_result"] = result
-                # 「保存済み結果」タブへ移動した場合でも、直近に分析したこの
-                # asset/version が selected として引き継がれるようにする。
-                result_id = result.get("asset_meta", {}).get("asset_id")
-                result_version = result.get("version")
-                st.session_state["selected_asset_id"] = result_id
-                st.session_state["selected_version"] = result_version
-                # ページリロード等でセッションが失われても復元できるよう、
-                # URLにも同じ asset_id/version を残しておく。
-                set_analysis_result_query_params(result_id, result_version)
-                # クレジットが消費されたはずなので、サイドバーの残数表示を最新化する。
-                refresh_auth_usage()
-            else:
-                try:
-                    err_json = response.json()
-                except Exception:
-                    err_json = None
+            for idx, creative_file in enumerate(uploaded_creative_files, start=1):
+                if len(uploaded_creative_files) > 1:
+                    st.markdown(f"---\n**クリエイティブ {idx}/{len(uploaded_creative_files)}: {creative_file.name}**")
 
-                st.session_state["analysis_result"] = None
-                clear_analysis_result_query_params()
-
-                if err_json and err_json.get("error_code") == "MONTHLY_CREDIT_LIMIT_EXCEEDED":
-                    st.error(f"🚫 {err_json.get('error', '今月のクレジット残量が不足しています。')}")
-                    usage = (err_json.get("details") or {}).get("usage") or {}
-                    if usage:
-                        st.caption(f"今月のクレジット利用: {usage.get('used')} / {usage.get('limit')} credits")
-                elif err_json and err_json.get("error_code") == "INSUFFICIENT_INPUT":
-                    st.error(f"⚠️ {err_json.get('error', '分析に必要な情報が不足しています。')}")
-                    st.write("**次のアクション**: 不足している情報（LPファイルやKPIファイル等）を追加して、再度分析を実行してください。")
-                elif err_json and str(err_json.get("error_code", "")).startswith("META_ADS_CSV_"):
-                    st.error(f"⚠️ Meta Ads CSVを読み取れませんでした: {err_json.get('error', '')}")
-                    st.write(
-                        "**次のアクション**: Meta Ads Manager のエクスポート設定を確認し、"
-                        "必要な指標を含めて再エクスポートしたCSVをアップロードし直してください。"
-                        "手元でKPIが分かっている場合は、上の「JSONで手入力」に切り替えることもできます。"
+                files = {"input_file": (creative_file.name, creative_file.getvalue(), creative_file.type)}
+                if lp_bytes is not None:
+                    files["lp_file"] = (lp_filename, lp_bytes, "text/html")
+                if kpi_bytes is not None:
+                    files["kpi_file"] = (kpi_filename, kpi_bytes, kpi_content_type)
+                data = {"mode": mode}
+                if lp_url_input:
+                    data["lp_url"] = lp_url_input
+                if asset_name_input:
+                    # 複数枚アップロード時は連番を付与して asset_name の衝突を避ける
+                    data["asset_name"] = (
+                        asset_name_input if len(uploaded_creative_files) == 1 else f"{asset_name_input}_{idx}"
                     )
-                elif err_json:
-                    st.error(f"❌ 分析中にエラーが発生しました（{response.status_code}）: {err_json.get('error', 'Unknown error')}")
-                    st.write("**次のアクション**: 入力内容を確認し、再度お試しください。解決しない場合は管理者にお問い合わせください。")
-                else:
-                    st.error(f"❌ 分析中にエラーが発生しました（HTTP {response.status_code}）")
 
-                with st.expander(
-                    "🔧 エラー詳細（デバッグ用）",
-                    expanded=False,
-                    key=widget_key("analyze", "expander_error_detail"),
-                ):
-                    st.json(err_json if err_json else {"raw_response": response.text})
+                response, exception = run_analyze_with_progress(files, data)
+
+                if exception is not None:
+                    # 前回成功時の analysis_result が残ったままだと、今回のエラー
+                    # メッセージの下に古い分析結果（5軸診断の全パネル）が
+                    # そのまま居座り、「エラーなのに結果が出ている」矛盾した画面になる。
+                    st.session_state["analysis_result"] = None
+                    clear_analysis_result_query_params()
+                    render_api_exception(exception)
+                    batch_results.append((creative_file.name, "error", None))
+                    continue
+
+                if response.status_code == 200:
+                    result = response.json()
+                    st.session_state["analysis_result"] = result
+                    result_id = result.get("asset_meta", {}).get("asset_id")
+                    result_version = result.get("version")
+                    st.session_state["selected_asset_id"] = result_id
+                    st.session_state["selected_version"] = result_version
+                    set_analysis_result_query_params(result_id, result_version)
+                    refresh_auth_usage()
+                    batch_results.append((creative_file.name, "success", result_id))
+                else:
+                    st.session_state["analysis_result"] = None
+                    clear_analysis_result_query_params()
+                    _render_analyze_error(response)
+                    batch_results.append((creative_file.name, "error", None))
+
+                    # クレジット上限に達した場合、残りのクリエイティブを回しても
+                    # 同じエラーを繰り返すだけなので、バッチ処理をそこで打ち切る。
+                    try:
+                        if response.json().get("error_code") == "MONTHLY_CREDIT_LIMIT_EXCEEDED":
+                            stopped_early = True
+                            break
+                    except Exception:
+                        pass
+
+            success_count = sum(1 for _, status, _ in batch_results if status == "success")
+            if len(uploaded_creative_files) > 1:
+                st.markdown("---")
+                if success_count == len(batch_results) and not stopped_early:
+                    st.success(f"✅ {success_count}件すべての分析が完了しました")
+                else:
+                    st.warning(
+                        f"{success_count}/{len(uploaded_creative_files)}件が完了しました"
+                        + ("（クレジット上限のため途中で停止しました）" if stopped_early else "")
+                    )
+                for filename, status, _ in batch_results:
+                    st.caption(("✅ " if status == "success" else "❌ ") + filename)
+                st.caption("各クリエイティブの分析結果は「保存済み結果」タブから確認できます。")
+            elif success_count == 1:
+                st.success("✅ 分析完了")
         else:
-            st.warning("⚠️ ファイルをアップロードしてください")
+            st.warning("⚠️ クリエイティブ（画像/動画）をアップロードしてください")
 
     # 分析結果は session_state に永続化し、ボタン判定の外側（毎rerun）で描画する。
     # こうしておかないと、結果内の削除チェックボックス等を操作した瞬間の rerun で
