@@ -23,6 +23,11 @@ from datetime import datetime
 # st.session_state（ブラウザセッションごとに独立し、rerunをまたいで保持される）
 # に Session オブジェクト自体を保持し、ここでその参照を取り直すことで、
 # 以下の17箇所の `api_session.*` 呼び出し全てを変更せずに両問題を解消する。
+#
+# 残論点（未解決）: セッションがサーバー側で無効化された場合（期限切れ・
+# アカウント/会社の無効化）、フロントエンド側はそれを検知してログイン画面へ
+# 戻す処理を持たない。docs/plans/auth_state_hardening.md および
+# https://github.com/nario0715masa0619-create/ad-insight-spec/issues/95 参照。
 if "api_session" not in st.session_state:
     st.session_state["api_session"] = requests.Session()
 api_session = st.session_state["api_session"]
