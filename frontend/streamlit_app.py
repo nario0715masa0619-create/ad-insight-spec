@@ -1449,7 +1449,7 @@ with tab_new:
     if missing_items:
         st.warning(f"⚠️ 不足している入力: {'、'.join(missing_items)}。上記を入力すると分析を実行できます。")
 
-    def _render_analyze_error(response) -> None:
+    def _render_analyze_error(response, idx) -> None:
         try:
             err_json = response.json()
         except Exception:
@@ -1479,7 +1479,11 @@ with tab_new:
         with st.expander(
             "🔧 エラー詳細（デバッグ用）",
             expanded=False,
-            key=widget_key("analyze", "expander_error_detail", idx=id(response)),
+            # id(response) はCPythonの参照カウントGCにより、同一バッチループ内で
+            # 別のResponseオブジェクトに再利用されうるため使わない（widget key
+            # 衝突によるStreamlitDuplicateElementKeyのリスクがあった）。
+            # 呼び出し元のループindex（クリエイティブごとに一意）を使う。
+            key=widget_key("analyze", "expander_error_detail", idx=idx),
         ):
             st.json(err_json if err_json else {"raw_response": response.text})
 
@@ -1540,7 +1544,7 @@ with tab_new:
                 else:
                     st.session_state["analysis_result"] = None
                     clear_analysis_result_query_params()
-                    _render_analyze_error(response)
+                    _render_analyze_error(response, idx)
                     batch_results.append((creative_file.name, "error", None))
 
                     # クレジット上限に達した場合、残りのクリエイティブを回しても

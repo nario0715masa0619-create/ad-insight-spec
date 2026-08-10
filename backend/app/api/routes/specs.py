@@ -3,10 +3,13 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import ipaddress
+import socket
 import tempfile
 import shutil
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.db.session import get_db
 from app.repositories import AdInsightRepository, MonitorRepository
@@ -108,6 +111,42 @@ def _build_decision_support_diff(
 
 # ===== エンドポイント =====
 
+# lp_url のSSRF対策: ホスト名として拒否する既知の内部/メタデータ向け名称
+# （IPアドレスへの解決結果は _is_unsafe_lp_host() 内で別途判定する）
+_BLOCKED_LP_HOSTNAMES = {"localhost", "metadata.google.internal", "metadata"}
+
+
+def _is_unsafe_lp_host(hostname: str) -> bool:
+    """
+    lp_url のホストが、loopback/link-local（クラウドメタデータエンドポイント含む）/
+    RFC1918プライベートIP等の内部向けアドレスに解決されないかを確認する。
+
+    認証済みユーザーが指定した任意のURLをサーバー側（LPService）からGETするため、
+    本番環境（GCP）上でメタデータエンドポイント（169.254.169.254等）や内部ネットワークへ
+    到達できてしまうSSRFを防ぐための最低限のチェック。
+    """
+    if hostname.lower() in _BLOCKED_LP_HOSTNAMES:
+        return True
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        # 名前解決できないホストは後続のLPServiceのfetchでもどのみち失敗するため、
+        # ここでは安全側に倒して拒否しない（誤検知よりfetch失敗の方が実害が少ない）
+        return False
+    for info in addr_infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return True
+    return False
+
+
 @router.post("/analyze", response_model=Dict[str, Any], tags=["Analysis"])
 async def analyze(
     input_file: UploadFile = File(...),
@@ -146,7 +185,8 @@ async def analyze(
     - 400: 入力ファイル形式エラー
     - 401: 未ログイン/セッション無効
     - 403: 当月のクレジット上限に到達（この分析に必要なクレジットが残量を超える）
-    - 422: 未対応のmode、または選択したmodeに対して`lp_url`/`lp_file`/`kpi_file`が不足
+    - 422: 未対応のmode、選択したmodeに対して`lp_url`/`lp_file`/`kpi_file`が不足、
+      または`lp_url`が不正なスキーム/内部アドレス（SSRF対策）
     - 500: 分析エラー
 
     **クレジット消費について**:
@@ -173,6 +213,19 @@ async def analyze(
             status_code=422,
         )
         raise HTTPException(status_code=status_code, detail=error_response)
+
+    if lp_url:
+        lp_hostname = urlparse(lp_url).hostname
+        if not lp_hostname or _is_unsafe_lp_host(lp_hostname):
+            error_response, status_code = create_error_response(
+                error_message=(
+                    f"lp_urlに指定できないホストです（内部アドレス/メタデータエンドポイント等は"
+                    f"使用できません）: '{lp_url}'"
+                ),
+                error_code="VALIDATION_ERROR",
+                status_code=422,
+            )
+            raise HTTPException(status_code=status_code, detail=error_response)
 
     monitor_repo = MonitorRepository(db)
     company = monitor_repo.get_company_by_id(current_user.company_id)
