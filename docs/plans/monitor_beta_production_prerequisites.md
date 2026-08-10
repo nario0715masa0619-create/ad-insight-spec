@@ -66,6 +66,12 @@ CLAUDE.mdの最優先方針「本番の安定運用を維持する」およびIs
 - この経路であれば、本ドキュメント末尾の「経路A用チェックリスト」だけを満たせば
   本番適用の判断ができます。
 
+**更新（読み取り専用の本番SSH調査を実施）**: 経路A・Bのどちらを選ぶ場合でも、
+共通して先に解決すべき**新たな重大事項**が見つかりました。本番の`alembic_version`が
+実際のテーブル構成と食い違っています（詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-1節）。
+`alembic upgrade head`を素朴に実行すると失敗する可能性が高く、モニターベータの
+migration適用前に必ず解消する必要があります。以降のチェックリストに反映しています。
+
 ### 経路B（将来・中長期）: Postgres移行（Issue #80系列）完了後に合流する
 
 - Issue #80のチェックリストがすべて完了し、本番が実際にPostgresへ切り替わった後、
@@ -87,12 +93,13 @@ CLAUDE.mdの最優先方針「本番の安定運用を維持する」およびIs
 
 | 項目 | 状態 | 備考 |
 |---|---|---|
-| 本番DBの実体確認 | **確認済み**（Issue #80の記録による。本セッションでの再確認はしていない） | SQLite、`/opt/ad-insight-spec/ad_insight.db` |
+| 本番DBの実体確認 | **確認済み**（本タスクで読み取り専用SSHにより直接確認） | SQLite、`/opt/ad-insight-spec/ad_insight.db`（729,088 bytes、権限0777） |
 | `DATABASE_URL`の管理方法 | 変更不要 | 現状の`.env`設定のまま。新しい接続文字列を用意する必要がない |
 | SSL要否 | 該当なし | SQLiteのためネットワーク接続自体が発生しない |
 | 接続ユーザー権限 | 該当なし | ファイルベースのため、OSユーザーの読み書き権限のみ関係する |
-| migration実行権限 | **未確認** | 本番デプロイ担当者が`alembic upgrade head`を実行できるアクセス権限（VMへのSSH等）を持っているかは要確認 |
-| seed実行権限 | 未確認 | 同上 |
+| migration実行権限 | **確認済み** | 本タスクで実際に`gcloud compute ssh`でVMへ接続できることを確認済み。sudo権限も利用可能 |
+| seed実行権限 | 確認済み | 同上 |
+| **Alembic管理状態と実スキーマの整合性** | **問題を発見（重大）** | `alembic_version`が`a1f7ccac7a04`のままだが、次のマイグレーション`180b9b618513`が作るはずの`verification_cases`等のテーブルが既に存在する（`create_all()`由来と推測）。素朴に`alembic upgrade head`すると失敗する可能性が高い。詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-1節 |
 
 ### 経路B（Postgres）向け（Issue #80系列に委譲・本ドキュメントでは深追いしない）
 
@@ -100,29 +107,28 @@ CLAUDE.mdの最優先方針「本番の安定運用を維持する」およびIs
 |---|---|---|
 | Postgresの配置方針（VM同居 / Cloud SQL） | **未決定** | [postgresql_hosting_decision_memo.md](./postgresql_hosting_decision_memo.md)でマネージドDBがやや有力だが断定なし |
 | 接続方式・SSL | 未確認 | 配置方針が決まってから確定する |
-| psycopg2-binaryの互換性 | **問題を発見**（下記参照） | 本番Python 3.13.5に対し、現在`requirements.txt`が固定する`psycopg2-binary==2.9.9`はホイールが存在しない |
-| migration実行権限・seed実行権限 | 未確認 | Postgres実体が決まってから確定する |
+| psycopg2-binaryの互換性 | **訂正: リスクは低い**（下記参照） | 本番venvには実際には`psycopg2-binary==2.9.12`が既に導入済み（`requirements.txt`のピン値`2.9.9`とは不一致だが、動作するバージョンは既に入っている） |
+| migration実行権限・seed実行権限 | 確認済み | 経路Aと同じVM・同じSSHアクセスで足りる |
 
-**新たに確認した技術的事実（本タスクで検証）**: PyPI上の`psycopg2-binary`パッケージ
-メタデータを確認したところ、`2.9.9`（現在の`requirements.txt`の固定値）は
-**Python 3.13向けのホイール（`cp313`）が存在しません**（最新対応は`cp312`まで）。
-[postgresql_migration_readiness.md](./postgresql_migration_readiness.md)が「本番Python 3.14では
-2.9.9は不可、2.9.12で動作確認」と記録していた懸念が、**本番Python 3.13.5でも同様に該当する**
-ことが分かりました（3.13も3.14と同様に2.9.9未対応のため）。ソースビルドも
-`pg_config`未検出等で失敗することが既に確認されているため、**経路Bに進む場合は
-`requirements.txt`の該当1行を`psycopg2-binary>=2.9.10`程度に更新する作業が必須**です
-（Issue #80のチェックリスト「本番Pythonバージョンに適合するpsycopg2-binary版を確定する」に
-該当。経路Aでは発生しない作業です）。
+**訂正（本タスクで本番venvを直接確認）**: 前回、PyPI上のメタデータのみから
+「`psycopg2-binary==2.9.9`は本番Python 3.13向けホイールが無いため経路Bでは更新必須」と
+記載しましたが、**本番venv（`/opt/ad-insight-spec/venv`）を実際に確認したところ、
+既に`psycopg2-binary==2.9.12`がインストール済み**でした（`requirements.txt`・
+未コミットの`setup.sh`はどちらも`2.9.9`を指定しており、実態と食い違っています。
+おそらくIssue #80が言及する過去のPostgres切替試行の際に手動で導入されたまま残ったものです）。
+**経路Bを選ぶ場合のpsycopg2-binary起因のブロッカーは、想定より小さいことが分かりました。**
+ただし`requirements.txt`・`setup.sh`と実態の乖離自体は[Issue #84](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/84)の
+運用衛生課題として解消することを推奨します。詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-3節。
 
 ## 2. データ
 
 | 項目 | 状態 | 備考 |
 |---|---|---|
-| 既存SQLiteデータの有無 | **未確認**（Issue #83が未着手） | `ad_insights`テーブルの件数自体、既存Issue #83のチェックリストがまだ埋まっていない |
+| 既存SQLiteデータの有無 | **確認済み**（本タスクで読み取り専用確認、Issue #83を先取り） | `ad_insights`が69件。`verification_*`系テーブルは0件（後述のAlembic不整合の一因） |
 | データ移行要否 | 経路Aでは**不要** | SQLiteのまま追加テーブル（`monitor_*`, `pricing_plans`, `credit_usage_logs`）を作成するだけであり、既存の`ad_insights`データはそのまま残る（`company_id`は`NULL`のまま。[MONITOR_BETA_OPERATION.md](../MONITOR_BETA_OPERATION.md)記載の既知の割り切り） |
 | 初回導入時に空でよいか | **空でよい** | `monitor_*`系テーブルは新規テーブルのため、初回は必然的に空。既存の`ad_insights`データへの影響はスキーマ追加のみ |
-| backup方針 | 未確認 | 本番SQLiteファイルの現行バックアップ運用（頻度・世代数）がdocs上に明記されていない。`docs/DEPLOYMENT.md`のバックアップ手順（ファイルコピー）はあるが、自動化されているかは未確認 |
-| rollback時の戻し方 | **確認済み（手順化済み）** | [monitor_beta_post_merge_runbook.md](./monitor_beta_post_merge_runbook.md) Phase 2「切り戻し観点」に記載。SQLite・Postgres両方でdowngrade往復をリハーサル済み |
+| backup方針 | **確認済み（問題を発見）** | 自動バックアップは存在せず、約31日前・古いスキーマの手動バックアップが1件のみ、同一ディスクに保存。詳細・リスク整理: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) |
+| rollback時の戻し方 | **確認済み（手順化済み。ただしAlembic不整合に注意）** | [monitor_beta_post_merge_runbook.md](./monitor_beta_post_merge_runbook.md) Phase 2「切り戻し観点」に記載。SQLite・Postgres両方でdowngrade往復をリハーサル済みだが、これは「クリーンな状態からのリハーサル」であり、本番の`alembic_version`不整合を解消せずに同じ手順をそのまま適用できるかは未検証 |
 
 ## 3. アプリ運用
 
@@ -168,37 +174,54 @@ CLAUDE.mdの最優先方針「本番の安定運用を維持する」およびIs
   login/`/me`/logout、0クレジットブロック（[monitor_beta_post_merge_runbook.md](./monitor_beta_post_merge_runbook.md)）
 - 隔離Postgres上での同等の動作（機能差分なし。[monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md)）
 - モニターベータのアプリ運用手順一式（admin作成〜オンボーディングまで）
-- 本番が現在SQLite運用中であること（Issue #80の記録ベース。本セッションでの直接確認ではない）
-- `psycopg2-binary==2.9.9`が本番Python 3.13.5（Issue #80系列記録による想定値）向けの
-  ホイールを持たないこと（本タスクでPyPIメタデータを確認）
+- **本番が現在SQLite運用中であること**（本タスクで読み取り専用SSHにより直接確認。
+  `/opt/ad-insight-spec/ad_insight.db`、729,088 bytes）
+- **本番`ad_insights`の既存件数（69件）**（本タスクで確認、Issue #83を先取り）
+- **本番のバックアップ運用状況**（自動化無し、31日前の手動バックアップ1件のみ、
+  同一ディスク保存。詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md)）
+- **migration/seed実行者の本番アクセス権限**（本タスクで実際にSSH接続・sudo利用を確認）
+- **本番venvのpsycopg2-binaryは実際には2.9.12が導入済み**（前回整理した2.9.9起因の
+  互換性リスクは訂正。`requirements.txt`との不一致自体はIssue #84相当の課題として残る）
+- **本番デプロイ済みコードがPR #79時点（`9c6da0f`）で止まっており、PR #91は未デプロイ**
+  （想定通りだが本タスクで直接確認）
 
 ### 未確認
 
-- 本番SQLiteファイルの現在のバックアップ運用（頻度・自動化の有無）
-- 本番`ad_insights`の既存レコード件数（Issue #83が未着手のまま）
-- migration/seedを実行する担当者の本番アクセス権限
-- 本番ディスク空き容量への影響（[postgresql_cost_estimate_memo.md](./postgresql_cost_estimate_memo.md)記載時点でディスク使用率79%、空き2GB。新規テーブル自体は小さいためほぼ無視できる想定だが未検証）
+- **本番の`alembic_version`（`a1f7ccac7a04`）と実スキーマ（verification系テーブルが
+  既に存在）の不整合をどう解消するかの具体的な方針**（新規発見・最重要）
+- バックアップ運用を今後どう設計すべきか（頻度・世代数・保存先の方針の意思決定）
+- 復元手順の正式な文書化・演習
+- 本番ディスク空き容量への影響（確認時点で使用率80%、空き約1.9GB。新規テーブル自体は
+  小さいためほぼ無視できる想定だが未検証）
 - Postgres移行の完了時期（経路Bを選ぶ場合。Issue #80系列に委譲）
 
 ---
 
 ## 経路A用チェックリスト（本番適用判断に必要な最小セット）
 
-- [ ] 本番SQLiteのバックアップ運用（頻度・自動化）を確認する
-- [ ] 本番`ad_insights`の既存件数を確認する（Issue #83の一部を先取りして確認してもよい。
-      読み取りのみ）
-- [ ] migration/seed実行者の本番アクセス権限を確認する
+- [x] ~~本番SQLiteのバックアップ運用（頻度・自動化）を確認する~~ → 確認完了。
+      自動化無し、31日前の古いバックアップ1件のみ（[詳細](./monitor_beta_production_backup_status.md)）。
+      **本番適用前に、最低でも適用直前の手動バックアップ取得を推奨**（実行はしていません）。
+- [x] ~~本番`ad_insights`の既存件数を確認する~~ → 確認完了。69件。
+- [x] ~~migration/seed実行者の本番アクセス権限を確認する~~ → 確認完了。SSH・sudo利用可能。
+- [ ] **【新規・最優先】本番の`alembic_version`（`a1f7ccac7a04`）と実スキーマの不整合
+      （verification系テーブルが`create_all()`由来で既に存在）を解消する方針を決める**
+      （`alembic stamp`等が候補だが、DB書き込みを伴うため本タスクでは実施していない。
+      これを解消しないまま`alembic upgrade head`すると失敗する可能性が高い）
+- [ ] 本番適用直前の手動バックアップを取得する（実行判断はユーザー側で）
 - [ ] 本番適用のタイミング（メンテナンス時間帯等）を決める
 - [ ] [monitor_beta_post_merge_runbook.md](./monitor_beta_post_merge_runbook.md) Phase 3の
-      手順に従って本番へ適用する
+      手順に従って本番へ適用する（ただし上記Alembic不整合の解消が前提）
 - [ ] 上記「スモークチェック」を実施する
 
 ## 経路B用チェックリスト（Postgres移行を選ぶ場合）
 
 Issue #80のチェックリストをそのまま参照してください。加えて:
 
-- [ ] `requirements.txt`の`psycopg2-binary`を本番Pythonバージョンに適合するバージョンへ更新する
-      （本タスクで確認した2.9.9のcp313非対応を踏まえ、`>=2.9.10`程度を候補とする）
+- [x] ~~`requirements.txt`のpsycopg2-binaryを本番Pythonバージョンに適合するバージョンへ更新する~~
+      → 訂正: 本番venvには既に動作する`2.9.12`が導入済みのため、緊急の作業ではない
+      （`requirements.txt`との表記不一致はIssue #84相当で解消を推奨）
+- [ ] 経路Aと共通の「Alembic不整合の解消」を先に行う
 - [ ] Issue #80の切替完了後、モニターベータの3リビジョン（`f3a1c9d2e8b0`〜`d3f8a6b2c1e4`）を
       含む完全なmigrationチェーンを、実際の本番相当Postgres環境で再確認する
 
@@ -206,17 +229,23 @@ Issue #80のチェックリストをそのまま参照してください。加�
 
 ## 次タスク候補（Issue化しやすい粒度、ドラフトのみ・起票はしていません）
 
-1. **本番SQLiteのバックアップ運用状況を確認する**（Must、経路A）
-   - 読み取りのみ。頻度・世代数・自動化有無を確認し、不足があれば別途整備を検討する。
-2. **本番`ad_insights`の既存件数を確認する**（Must、経路A・Issue #83と重複可能性あり）
-   - Issue #83のチェックリスト最初の項目と同一。経路Aの判断のためだけなら
-     Issue #83を待たずに読み取りのみで先に確認しても良い。
+1. **【最優先・新規】本番のAlembic管理状態の不整合を解消する方針を決め、実施する**（Must、経路A・B共通）
+   - `alembic_version=a1f7ccac7a04`のまま、`180b9b618513`が作るはずのverification系
+     テーブルが既に存在する状態を解消する。候補は`alembic stamp 180b9b618513`（さらに
+     `d04670158813`まで）だが、実際のテーブル定義とマイグレーションが完全に一致しているかの
+     確認が先に必要。DB書き込みを伴うため、本タスクでは実施していない。
+2. **本番適用直前の手動バックアップ取得を運用に組み込む**（Must、経路A）
+   - 最低限、モニターベータのmigration適用前に1回、`cp`によるファイルコピーで
+     バックアップを取得する運用を、実際の適用作業の一部として組み込む。
 3. **モニターベータの本番適用タイミングを決定する**（Must、経路A）
    - メンテナンス時間帯、関係者への事前周知が必要か等。
-4. **`requirements.txt`のpsycopg2-binaryバージョンを本番Pythonに適合させる**（Must、経路Bのみ）
-   - Issue #80のチェックリスト該当項目に、本タスクで確認した具体的な非互換性
-     （2.9.9はcp313ホイール無し）を追記する形が良い。
-5. **Issue #87（事業検証パイロット）とモニターベータの連携を検討する**（Should）
+4. **本番の自動バックアップ運用を整備する**（Should、経路A・B共通）
+   - cron/systemd timerいずれかで日次バックアップを自動化し、複数世代保持する。
+     可能ならVM外（GCSバケット等）への保存も検討する。
+5. **`requirements.txt`/`setup.sh`のpsycopg2-binary表記を実態（2.9.12）に合わせる**（Should、Issue #84相当）
+   - 緊急ではないが、ドキュメントと実態の乖離を放置しない。
+6. **VM上のuntrackedファイル（`setup.sh`, `current-freeze.txt`, `=2.2.0`等）の扱いを決める**（Should、Issue #84相当）
+7. **Issue #87（事業検証パイロット）とモニターベータの連携を検討する**（Should）
    - Issue #87は3〜5件の実案件でCampaignPilotの価値を検証する計画だが、
      現状の計画docsは招待制ログイン・会社単位分離が導入される前に書かれている。
      モニターベータの会社作成・招待フローが、そのままパイロット参加者への
@@ -224,10 +253,18 @@ Issue #80のチェックリストをそのまま参照してください。加�
 
 ---
 
-## 今回スコープ外として残したもの
+## 今回実施したこと・スコープ外として残したもの
 
-- 本番DBへの実際の接続・確認（読み取りであっても、本タスクの制約により未実施）
+**本タスクで新たに実施したこと**: 本番VMへの読み取り専用SSH接続による、DB実体パス・
+バックアップ運用状況・`ad_insights`件数・Alembic管理状態・デプロイ済みコードのバージョン・
+psycopg2-binary実態の直接確認（詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md)）。
+DB更新・`.env`編集・バックアップ設定変更・サービス再起動・手動バックアップ/復元実行は
+一切行っていません。
+
+**スコープ外として残したもの**:
+- Alembic不整合の実際の解消（`alembic stamp`等、DB書き込みを伴うため）
 - Issue #80/#83/#84自体の作業実施（既存の別トラックのため、本タスクでは分析の参照のみ）
 - Postgres移行の実施判断そのもの（経路Aか経路Bかは、本ドキュメントの整理を踏まえて
   ユーザー側で最終判断することを想定）
 - GitHub Issueの新規起票（「次タスク候補」はドラフトに留め、実際の起票はしていません）
+- 本番の自動バックアップ運用の実装（設定変更を伴うため）
