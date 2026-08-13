@@ -6,6 +6,9 @@ import threading
 import time
 import html as html_module
 from datetime import datetime
+from typing import Optional
+
+from auth_helpers import reauth_message_for_response
 
 # 招待制モニターベータ: 全APIリクエストが同じセッションを経由するようにし、
 # ログイン後は Authorization ヘッダーをここに一度セットするだけで
@@ -24,10 +27,11 @@ from datetime import datetime
 # に Session オブジェクト自体を保持し、ここでその参照を取り直すことで、
 # 以下の17箇所の `api_session.*` 呼び出し全てを変更せずに両問題を解消する。
 #
-# 残論点（未解決）: セッションがサーバー側で無効化された場合（期限切れ・
-# アカウント/会社の無効化）、フロントエンド側はそれを検知してログイン画面へ
-# 戻す処理を持たない。docs/plans/auth_state_hardening.md および
-# https://github.com/nario0715masa0619-create/ad-insight-spec/issues/95 参照。
+# セッションがサーバー側で無効化された場合（期限切れ・アカウント/会社の無効化）の
+# 再ログイン導線は handle_reauth_if_needed() / render_login_gate() で対応済み
+# （Issue #95 fast follow）。残る既知の制約（ページ全体リロード時の状態消失、
+# 複数タブ/複数ユーザーの実地検証未実施等）は docs/plans/auth_state_hardening.md
+# 参照。
 if "api_session" not in st.session_state:
     st.session_state["api_session"] = requests.Session()
 api_session = st.session_state["api_session"]
@@ -40,6 +44,32 @@ def api_headers_set(token):
         api_session.headers.pop("Authorization", None)
 
 
+def handle_reauth_if_needed(response) -> bool:
+    """
+    レスポンスが再ログイン必要な401であれば、認証状態をクリアしてログイン画面へ
+    戻れるようにする。戻り値Trueの場合、呼び出し側はそれ以上の結果表示処理を
+    打ち切り、st.rerun()するか、単に処理をreturnして次rerunでrender_login_gate()に
+    ログイン画面を出させること。
+
+    401かどうかの判定自体（何をもって「再ログインが必要」とするか）は
+    auth_helpers.reauth_message_for_response() に切り出してある（Streamlit
+    ランタイム非依存の純粋関数にし、frontend/tests/test_auth_helpers.py で
+    通常のpytestとして高速にユニットテストできるようにするため）。
+
+    重要: st.session_stateへの書き込み・st.rerun()を含むため、**必ずメインスレッド
+    から呼ぶこと**（run_analyze_with_progress()のバックグラウンドスレッド内では
+    呼ばず、thread.join()後のメインスレッド側で呼ぶ）。
+    """
+    message = reauth_message_for_response(response)
+    if not message:
+        return False
+    st.session_state.pop("auth_token", None)
+    st.session_state.pop("auth_user", None)
+    api_headers_set(None)
+    st.session_state["auth_reauth_message"] = message
+    return True
+
+
 def render_login_gate() -> bool:
     """
     招待制モニターベータのログインゲート。
@@ -48,7 +78,15 @@ def render_login_gate() -> bool:
     これを見てアプリ本体の描画を st.stop() で止める）。ログイン済みなら
     サイドバーに会社名・ベータ表示・今月の利用状況・ログアウトボタンを
     描画して True を返す。
+
+    セッション無効化・期限切れ等でhandle_reauth_if_needed()が認証状態を
+    クリアした直後のrerunでは、その理由（案内文）をログインフォームの上に
+    一度だけ表示する。
     """
+    reauth_message = st.session_state.pop("auth_reauth_message", None)
+    if reauth_message:
+        st.warning(f"🔒 {reauth_message}")
+
     if st.session_state.get("auth_token") and st.session_state.get("auth_user"):
         # api_session は st.session_state 経由でrerunをまたいで保持されるため
         # 通常は不要だが、念のため毎rerunでヘッダーを保持中のトークンへ揃え直す
@@ -1261,6 +1299,8 @@ def render_asset_detail(tab_key: str, detail: dict, asset_id: str, on_delete_suc
                             if on_delete_success:
                                 on_delete_success()
                             st.rerun()
+                        elif handle_reauth_if_needed(response):
+                            st.rerun()
                         else:
                             st.error(f"❌ エラー: {response.status_code}\n{response.text}")
                     except Exception as e:
@@ -1541,6 +1581,13 @@ with tab_new:
                     set_analysis_result_query_params(result_id, result_version)
                     refresh_auth_usage()
                     batch_results.append((creative_file.name, "success", result_id))
+                elif handle_reauth_if_needed(response):
+                    # セッション切れ等。残りのクリエイティブを回しても同じ結果に
+                    # なるだけなので打ち切り、rerun()でログイン画面へ戻す。
+                    st.session_state["analysis_result"] = None
+                    clear_analysis_result_query_params()
+                    batch_results.append((creative_file.name, "error", None))
+                    st.rerun()
                 else:
                     st.session_state["analysis_result"] = None
                     clear_analysis_result_query_params()
@@ -1636,6 +1683,8 @@ with tab_saved:
                     refresh_saved_list()
 
                 render_asset_detail("saved_detail", detail, asset_id, on_delete_success=_back_to_list)
+            elif handle_reauth_if_needed(response):
+                st.rerun()
             else:
                 try:
                     err_json = response.json()
@@ -1672,6 +1721,8 @@ with tab_saved:
                         results = response.json()
                         st.session_state["list_items"] = results.get("items", [])
                         st.success(f"✅ {len(results.get('items', []))} 件取得")
+                    elif handle_reauth_if_needed(response):
+                        st.rerun()
                     else:
                         st.error(f"❌ エラー: {response.status_code}")
                 except Exception as e:
@@ -1837,6 +1888,8 @@ with tab_verify:
                             st.session_state["verif_view"] = "detail"
                             st.session_state["verif_selected_case_id"] = new_case["id"]
                             st.rerun()
+                        elif handle_reauth_if_needed(response):
+                            st.rerun()
                         else:
                             st.error(f"❌ 登録に失敗しました（HTTP {response.status_code}）: {response.text}")
                     except Exception as e:
@@ -1984,6 +2037,8 @@ with tab_verify:
                                         render_api_exception(e)
         elif response is not None and response.status_code == 404:
             st.error("❌ 案件が見つかりません。削除された可能性があります。")
+        elif response is not None and handle_reauth_if_needed(response):
+            st.rerun()
         elif response is not None:
             st.error(f"❌ 詳細取得に失敗しました（HTTP {response.status_code}）")
 
@@ -2005,6 +2060,8 @@ with tab_verify:
                     body = response.json()
                     st.session_state["verif_list_items"] = body.get("items", [])
                     st.session_state["verif_list_total"] = body.get("total", 0)
+                elif handle_reauth_if_needed(response):
+                    st.rerun()
                 else:
                     st.error(f"❌ 一覧取得に失敗しました（HTTP {response.status_code}）")
             except Exception as e:
