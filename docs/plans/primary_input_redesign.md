@@ -103,12 +103,13 @@ docsをそれに合わせて整えた設計判断を記録します。
 `lp_url`は認証済みユーザーが指定した任意のURLをサーバー側（`LPService`）からGETする経路
 であるため、レビューで指摘を受けてSSRF対策（loopback/link-local/クラウドメタデータ/RFC1918
 プライベートIP等の内部アドレスを422で拒否）を追加しています
-（`backend/app/api/routes/specs.py::_is_unsafe_lp_host()`）。これは**入力URLに対する
-最低限の防御**であり、HTTPリダイレクトを追従した先のホストまでは再検証していません。
-この残論点は独立したfollow-upとして切り出しています。
+（`backend/app/utils/url_safety.py::is_unsafe_lp_host()`、API層・service層の両方から
+共通で呼ぶ）。当初は**入力URLに対する最低限の防御**でしたが、その後見つかった
+redirect経由のバイパス可能性（Issue #97）にも対応済みです。`LPService`がredirectを
+1 hopずつ追跡し、都度ホストを再検証してから追従するようになっています。
 
-> **follow-up整理済み**: redirect経由のSSRFバイパス可能性について、現状防御の範囲・
-> 想定攻撃シナリオ・対応案の比較を整理しました。
+> **✅ 対応済み（Issue #97）**: redirect経由のSSRFバイパス可能性について、実装内容・
+> 残る既知制約を整理しました。
 > [lp_url_redirect_ssrf_followup.md](./lp_url_redirect_ssrf_followup.md) を参照してください。
 
 ## 手入力KPIの位置づけ変更

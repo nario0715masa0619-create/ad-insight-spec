@@ -3,8 +3,6 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-import ipaddress
-import socket
 import tempfile
 import shutil
 import re
@@ -23,6 +21,7 @@ from app.api.deps import get_current_user
 
 from app.utils.error_handler import create_error_response, ErrorResponse
 from app.utils.logging import request_id_var, trace_id_var, get_logger
+from app.utils.url_safety import is_unsafe_lp_host
 
 logger = get_logger(__name__)
 
@@ -111,41 +110,6 @@ def _build_decision_support_diff(
 
 # ===== エンドポイント =====
 
-# lp_url のSSRF対策: ホスト名として拒否する既知の内部/メタデータ向け名称
-# （IPアドレスへの解決結果は _is_unsafe_lp_host() 内で別途判定する）
-_BLOCKED_LP_HOSTNAMES = {"localhost", "metadata.google.internal", "metadata"}
-
-
-def _is_unsafe_lp_host(hostname: str) -> bool:
-    """
-    lp_url のホストが、loopback/link-local（クラウドメタデータエンドポイント含む）/
-    RFC1918プライベートIP等の内部向けアドレスに解決されないかを確認する。
-
-    認証済みユーザーが指定した任意のURLをサーバー側（LPService）からGETするため、
-    本番環境（GCP）上でメタデータエンドポイント（169.254.169.254等）や内部ネットワークへ
-    到達できてしまうSSRFを防ぐための最低限のチェック。
-    """
-    if hostname.lower() in _BLOCKED_LP_HOSTNAMES:
-        return True
-    try:
-        addr_infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        # 名前解決できないホストは後続のLPServiceのfetchでもどのみち失敗するため、
-        # ここでは安全側に倒して拒否しない（誤検知よりfetch失敗の方が実害が少ない）
-        return False
-    for info in addr_infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_loopback
-            or ip.is_link_local
-            or ip.is_private
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            return True
-    return False
-
 
 @router.post("/analyze", response_model=Dict[str, Any], tags=["Analysis"])
 async def analyze(
@@ -216,7 +180,7 @@ async def analyze(
 
     if lp_url:
         lp_hostname = urlparse(lp_url).hostname
-        if not lp_hostname or _is_unsafe_lp_host(lp_hostname):
+        if not lp_hostname or is_unsafe_lp_host(lp_hostname):
             error_response, status_code = create_error_response(
                 error_message=(
                     f"lp_urlに指定できないホストです（内部アドレス/メタデータエンドポイント等は"

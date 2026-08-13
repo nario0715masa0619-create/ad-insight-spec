@@ -25,7 +25,9 @@ from app.models.ad_insight import AdInsight
 from app.models import MonitorCompany, MonitorUser
 from app.api.deps import get_current_user
 from app.api.routes import specs as specs_module
+from app.services.lp_service import LPUnsafeRedirectError
 from app.services.meta_ads_csv_service import MetaAdsCsvError
+from app.utils import url_safety
 
 # StaticPool: sqlite:///:memory: は接続ごとに別DBになるため、TestClient経由の
 # リクエスト（別スレッド/別チェックアウトで接続を取得しうる）でも同じDBを
@@ -347,12 +349,17 @@ class TestLpUrlInput:
 class TestLpUrlSsrfProtection:
     """
     lp_url がサーバー側（LPService）からのHTTP GET対象になることを踏まえた
-    SSRF対策（specs.py::_is_unsafe_lp_host）の回帰テスト。PR #93レビューで
-    指摘された、認証済みユーザーが内部アドレス/クラウドメタデータエンドポイントを
-    lp_url経由で到達させられる問題への対応。
+    SSRF対策（app.utils.url_safety.is_unsafe_lp_host、specs.pyから共通化。
+    Issue #97）の回帰テスト。PR #93レビューで指摘された、認証済みユーザーが
+    内部アドレス/クラウドメタデータエンドポイントをlp_url経由で到達させられる
+    問題への対応。
 
     すべてリテラルIPアドレス/既知の禁止ホスト名を使い、実際のDNS解決や
     ネットワークI/Oを発生させない。
+
+    redirect先の再検証（LPService側）のテストはtest_lp_service_redirect_ssrf.py、
+    その伝播がAPIエラーへどう変換されるかはこのクラスの
+    test_lp_unsafe_redirect_error_from_orchestrator_returns_400 を参照。
     """
 
     @pytest.mark.parametrize(
@@ -404,6 +411,9 @@ class TestLpUrlSsrfProtection:
 
         socket.getaddrinfo自体をモックしてgaierrorを起こし、テスト実行環境の実際の
         DNS解決可否（ネットワーク遮断環境での失敗・遅延）に依存しないようにする。
+        ホスト検証ロジック自体はapp.utils.url_safetyへ切り出されている
+        （Issue #97、LPServiceのredirect hop再検証と共通化するため）ので、
+        そちらのsocketをモックする。
         """
         spec_dict = _minimal_valid_spec_dict(asset_id="asset_lp_url_unresolvable_test")
         spec_dict["input_metadata"]["mode"] = "file_plus_lp"
@@ -411,7 +421,7 @@ class TestLpUrlSsrfProtection:
         spec_dict["landing_page"] = {"url": "https://this-host-should-not-resolve.invalid/lp"}
 
         with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls, \
-                patch.object(specs_module.socket, "getaddrinfo", side_effect=specs_module.socket.gaierror):
+                patch.object(url_safety.socket, "getaddrinfo", side_effect=url_safety.socket.gaierror):
             mock_orchestrator_cls.return_value.run.return_value = spec_dict
             response = client.post(
                 "/api/v1/specs/analyze",
@@ -420,6 +430,30 @@ class TestLpUrlSsrfProtection:
             )
 
         assert response.status_code == 200
+
+    def test_lp_unsafe_redirect_error_from_orchestrator_returns_400(self, client):
+        """
+        入力URL自体は一見安全なホストのため422バリデーションを通過するが、
+        AnalysisOrchestrator（内部でLPServiceがredirectを追跡）がredirect先の
+        安全でないホストを検出しLPUnsafeRedirectErrorを送出するケース
+        （Issue #97）。500(ANALYSIS_ERROR)ではなく400(VALIDATION_ERROR)として
+        扱われることを確認する。LPUnsafeRedirectError自体がValueErrorを継承して
+        いることで、specs.py側の既存の`except ValueError`分岐がそのまま
+        ハンドリングする設計になっている（specs.py側の変更は不要という設計判断の
+        回帰テスト）。
+        """
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.side_effect = LPUnsafeRedirectError(
+                "LP fetchのredirect先に内部アドレス等の安全でないホストが検出されたため中止しました（hop 1）"
+            )
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp", "lp_url": "https://93.184.216.34/lp"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "VALIDATION_ERROR"
 
 
 class TestFilePlusKpiMode:
