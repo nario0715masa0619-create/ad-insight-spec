@@ -26,10 +26,11 @@ CampaignPilot（旧: Ad-Insight-Spec / AIS）は、広告分析において人�
 5. **変換**: 分析結果を `AdInsightSpec v0.2` の JSON 構造に変換
 6. **保存**: SQLite データベースに履歴 (`version`) 付きで保存
 
-### 3 つの入力モード
+### 4 つの入力モード（詳細: [primary_input_redesign.md](./plans/primary_input_redesign.md)）
 1. **`file_only`**: クリエイティブ（画像/動画）単体での分析。
 2. **`file_plus_lp`**: クリエイティブ ＋ ランディングページ (LP) の分析。LP のメッセージとの一貫性を評価します。
-3. **`file_plus_lp_plus_manual_kpi`**: KPI情報を含め、パフォーマンスとクリエイティブ特性の相関を分析します。
+3. **`file_plus_kpi`**: クリエイティブ ＋ KPI（Meta Ads CSV/JSON）。LPなし・広告面分析。
+4. **`file_plus_lp_plus_manual_kpi`**（標準・推奨）: クリエイティブ + LP + KPI情報を含め、パフォーマンスとクリエイティブ特性の相関を分析します。
 
 ---
 
