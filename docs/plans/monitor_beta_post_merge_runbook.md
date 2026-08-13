@@ -26,11 +26,25 @@
   系列として別途進行中・未完了であり、モニターベータの本番適用はそれとは独立に
   本番SQLiteへ先行して行える可能性が高いという結論をまとめています。
 
-**現状（2026-08-09時点）**: PR #91はまだ `main` にマージされていません（`state: OPEN`）。
-このドキュメントはマージ後を前提とした準備であり、本ドキュメント自体の作成・
-以下のリハーサルはすべて隔離した使い捨てSQLite DBに対して行い、本番・開発中の
+**現状（2026-08-13時点）**: PR #91は`main`にマージ済みです（2026-08-09マージ）。加えて、
+モニターベータの主入力再設計（[PR #93](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/93)）・
+auth state安定化（[PR #96](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/96)）・
+`lp_url`のredirect経由SSRF hardening（[PR #98](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/98)）も
+`main`にマージ済みです。つまり**Phase 1（マージ）はコードとしては完了しています。**
+
+以下のリハーサル自体は隔離した使い捨てSQLite DBに対して行ったもので、本番・開発中の
 実DBには一切接続していません（Postgres版の隔離リハーサルは別途
 [monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) で実施）。
+
+**未着手（重要）**: Phase 3「本番適用」（`alembic upgrade head`の本番実行・本番へのコード
+デプロイ）自体はこの時点でまだ実施していません。加えて、[本番適用前提条件の整理
+（PR #92）](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/92)（`main`マージ済み、
+詳細: [monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)）により、
+**本番の`alembic_version`が実スキーマと食い違っており、素朴に`alembic upgrade head`を
+実行すると失敗する可能性が高い**という重大事項が判明しています。本番適用（Phase 3）に
+進む前に、必ず[monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)
+の内容（および関連する[Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)
+系列）を確認してください。
 
 ## 全体の流れ
 
