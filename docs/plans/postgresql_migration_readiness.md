@@ -7,6 +7,26 @@ CampaignPilot（Ad-Insight-Spec）を SQLite から PostgreSQL へ移行する�
 [`docs/POSTGRES_MIGRATION.md`](../POSTGRES_MIGRATION.md) は Alembic 導入前に書かれた
 古い手順書で、現状と食い違う記述（後述）があるため、正確な現状整理として本ドキュメントを作成した。
 
+**追記（後続タスクでの確認事項）**: 「未確定事項#2」（本番Pythonバージョンと
+`psycopg2-binary`の整合）について、後続の
+[monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)
+（招待制モニターベータPR #91の本番適用前提整理タスク）で、PyPI上のパッケージ
+メタデータを確認したところ、現在`requirements.txt`が固定する`psycopg2-binary==2.9.9`は
+**Python 3.13向けホイール（`cp313`）が存在しない**ことを確認した（3.14だけでなく
+3.13でも本ドキュメント記載の懸念が該当する）。本番Pythonが3.13.5という記録
+（[postgresql_hosting_decision_memo.md](./postgresql_hosting_decision_memo.md)参照）が正しければ、
+`requirements.txt`のピン値と実際に動くバージョンが一致していないことになる。
+
+**訂正（さらに後続の本番SSH調査で判明）**: 上記はPyPIのメタデータのみに基づく懸念だったが、
+本番venv（`/opt/ad-insight-spec/venv`）を読み取り専用で直接確認したところ、**実際には
+`psycopg2-binary==2.9.12`が既にインストール済み**であることが分かった（`requirements.txt`の
+ピン値`2.9.9`とは異なるが、動作するバージョンは既に入っている）。そのため、
+**Postgres移行時に`requirements.txt`の更新が「必須」とまでは言えず、想定していたリスクは
+低い**。`requirements.txt`・未コミットの`setup.sh`の表記と実態の乖離自体は、
+移行そのもののブロッカーではなく[Issue #84](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/84)
+（運用衛生課題の整理）の対象として解消することを推奨する。詳細:
+[monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-3節。
+
 **重要な前提の注記**: 本ドキュメントの検証内容は、すべてローカルの検証用環境
 （ローカルWindows機に新規インストールしたPostgreSQL 16、または開発用SQLite）で
 行ったものであり、本番VM（34.84.24.83）には一切アクセスしていない。本番の実際の

@@ -20,6 +20,11 @@
   [monitor_beta_postgres_rehearsal.md](./monitor_beta_postgres_rehearsal.md) を参照してください。
   以下の「リハーサル実施記録」はSQLiteで実施したものですが、同じ手順をPostgres環境でも
   別途リハーサルし、機能的な差分が無いことを確認済みです。
+- **「本番適用そのものをいつ・どちらのDBに対して行うか」の方針整理**は
+  [monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md) を
+  参照してください。本番のPostgres移行自体は[Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)
+  系列として別途進行中・未完了であり、モニターベータの本番適用はそれとは独立に
+  本番SQLiteへ先行して行える可能性が高いという結論をまとめています。
 
 **現状（2026-08-09時点）**: PR #91はまだ `main` にマージされていません（`state: OPEN`）。
 このドキュメントはマージ後を前提とした準備であり、本ドキュメント自体の作成・
@@ -61,21 +66,31 @@ Phase 4: モニター1社目オンボーディング（MONITOR_ACCOUNT_MANAGEMEN
 
 ### バックアップ方針
 
-- [ ] 本番DBの直近バックアップが存在し、リストア手順が分かっている
-  （`docs/POSTGRES_MIGRATION.md` / `docs/DEPLOYMENT.md` の既存バックアップ手順に準拠）。
-- [ ] 本番が現在SQLiteかPostgresかを確認する（`docs/OPERATIONS.md`時点ではPostgres想定の
-  記述があるが、`DATABASE_URL`の実値を必ず本番環境側で直接確認すること。本タスクの
-  リハーサルはSQLiteでのみ実施しており、Postgres固有の挙動差分は未検証）。
+- [x] ~~本番DBの直近バックアップが存在し、リストア手順が分かっている~~ →
+  読み取り専用調査で確認済み。**自動バックアップは存在せず、約31日前・古いスキーマの
+  手動バックアップが1件のみ、DBと同一ディスクに保存**という状態でした。リストア手順も
+  正式には文書化されていません。詳細・リスク整理: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md)。
+  **本番適用の直前に、最低限もう一度手動バックアップを取得することを強く推奨します**
+  （実行はしていません）。
+- [x] ~~本番が現在SQLiteかPostgresかを確認する~~ → 読み取り専用SSHで確認済み。
+  **本番は現在SQLite**（`/opt/ad-insight-spec/ad_insight.db`）。`docs/OPERATIONS.md`の
+  Postgres想定記述は現状と一致していません。
 
 ### 既存データ確認
 
-- [ ] 本番の `ad_insights` に既存レコードがあるか確認する。あれば、マイグレーション後は
-  それらが `company_id IS NULL` のまま残り、モニター企業のどの一覧にも表示されなくなる
-  （データは消えないが、スコープ外になる。[MONITOR_BETA_OPERATION.md](../MONITOR_BETA_OPERATION.md)
-  「4. データの取り扱い・分離」に記載の既知の割り切り）。この挙動が許容できるか事前に判断する。
-- [ ] 本番の `alembic_version` が現在どのリビジョンか確認する（`alembic current`）。
-  `docs/DEPLOYMENT.md`の「1a. DBマイグレーション」に記載のとおり、Alembic未導入の
-  本番DBには先に`alembic stamp <baseline>`が必要な場合がある。
+- [x] ~~本番の `ad_insights` に既存レコードがあるか確認する~~ → 確認済み。**69件**存在。
+  マイグレーション後は`company_id IS NULL`のまま残り、モニター企業のどの一覧にも
+  表示されなくなります（データは消えないが、スコープ外になる。[MONITOR_BETA_OPERATION.md](../MONITOR_BETA_OPERATION.md)
+  「4. データの取り扱い・分離」に記載の既知の割り切り）。この挙動は許容範囲と判断できます
+  （69件はいずれも「招待制導入前の実験的な分析結果」であり、モニター企業のデータではないため）。
+- [x] ~~本番の `alembic_version` が現在どのリビジョンか確認する~~ → 確認済み、
+  **かつ重大な不整合を発見**。`alembic_version=a1f7ccac7a04`だが、次のマイグレーション
+  `180b9b618513`が作成するはずの`verification_cases`等のテーブルが**既に物理的に存在**
+  しています（`Base.metadata.create_all()`由来と推測）。**この状態のまま
+  `alembic upgrade head`を実行すると、`180b9b618513`が`CREATE TABLE`で失敗する可能性が
+  高いです。** モニターベータの3リビジョン適用前に、`alembic stamp`等でこの不整合を
+  解消する方針を先に決める必要があります（DB書き込みを伴うため、本タスクでは未実施。
+  詳細: [monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-1節）。
 
 ### migration実行順序の確認
 
