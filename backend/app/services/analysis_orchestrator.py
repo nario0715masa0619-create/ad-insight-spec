@@ -17,6 +17,7 @@ import time
 
 from app.services.base_service import ServiceError, ProcessingError
 from app.services.meta_ads_csv_service import MetaAdsCsvError
+from app.services.lp_service import LPUnsafeRedirectError
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,15 @@ class AnalysisOrchestrator:
             # ここでProcessingErrorに包んでしまうとAPI層（specs.py）でその案内文を
             # 拾えなくなる。素通りさせ、specs.py側で専用ハンドリングする。
             logger.warning("Pipeline failed: Meta Ads CSV validation error")
+            raise
+        except LPUnsafeRedirectError:
+            # SSRF対策（Issue #97）: lp_urlのredirect先に内部アドレス等の
+            # 安全でないホストを検出した場合。下のexcept Exceptionで一般的な
+            # ProcessingErrorに包んでしまうとValueErrorとしての性質が失われ、
+            # specs.py側で500（ANALYSIS_ERROR）にフォールバックしてしまうため、
+            # 素通りさせる（LPUnsafeRedirectErrorはValueErrorを継承しており、
+            # specs.py::analyze()の既存の`except ValueError`分岐が400として扱う）。
+            logger.warning("Pipeline failed: unsafe LP redirect target detected")
             raise
         except Exception as e:
             logger.error(f"Pipeline failed: {str(e)}")
@@ -311,6 +321,14 @@ class AnalysisOrchestrator:
                 lp_service = LPService()
                 self.lp_result = lp_service.execute(self.lp_input)
                 logger.info("LP parsing successful")
+            except LPUnsafeRedirectError:
+                # SSRF対策（Issue #97）: 安全でないredirect先の検出は、他のLP
+                # 取得失敗（タイムアウト・404等）と違いセキュリティ上重要なため、
+                # fail-softで握りつぶさずそのまま呼び出し元へ伝播させる。
+                # LPUnsafeRedirectErrorはValueErrorも継承しているため、
+                # specs.py::analyze()の既存の`except ValueError`分岐が
+                # 500ではなく400として扱う。
+                raise
             except Exception as e:
                 logger.warning(f"LP parsing failed (non-fatal): {str(e)}")
                 self.lp_result = {}

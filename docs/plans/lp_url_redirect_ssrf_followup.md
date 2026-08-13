@@ -12,6 +12,13 @@ Meta Ads CSV + 広告クリエイティブ + LP）で、`lp_url`パラメータ�
 
 **関連Issue**: [#97 security: harden lp_url fetch against redirect-based SSRF](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/97)
 
+> **✅ 実装済み（Issue #97対応）**: 下記「推奨方針」の案Bに沿って実装しました。
+> `LPService`が`allow_redirects=False`でredirectを1 hopずつ追跡し、都度ホストを
+> 再検証してから追従します。ホスト検証ロジックは`app.utils.url_safety.
+> is_unsafe_lp_host()`へ共通化し、API層（`specs.py`、入力URLの初期検証）と
+> service層（`lp_service.py`、redirect各hopの再検証）の両方から呼んでいます。
+> 実装内容の詳細は本ドキュメント末尾の「実装内容（Issue #97）」章を参照してください。
+
 ## 背景: PR #93で何を防いだか
 
 CampaignPilotの主入力再定義の一環で、`/api/v1/specs/analyze`に`lp_url`フォーム
@@ -146,19 +153,86 @@ service層（`lp_service.py`）の両方から呼べる形へ切り出すリフ�
 
 ## 非対象（本follow-up整理のスコープ外）
 
-- redirect経由SSRF対策の実際の実装（本ドキュメントは論点整理のみ）
-- `allow_redirects=False`の即時反映
 - HTTPクライアント全体の刷新（案C）
 - `LPService`以外のフェッチ経路の監査（現時点で該当機能なし）
+- 認証/セッション設計の変更
+- LP解析品質の改善そのもの
+- CSV-onlyモード等、他のfollow-up論点の実装
 
-## 受け入れ条件（実装Issueとして着手する場合の目安）
+## 受け入れ条件（実装済み）
 
-- [ ] `_is_unsafe_lp_host()`相当のロジックがAPI層・service層の両方から再利用できる
-      形に切り出されている
-- [ ] `LPService`が3xxレスポンスを受け取った際、リダイレクト先URLのホストを
-      都度再検証してから追従する
-- [ ] 最大リダイレクトhop数の上限が設けられている
-- [ ] 正当なLP（http→https正規化、www正規化等の一般的なリダイレクトパターン）が
+- [x] `_is_unsafe_lp_host()`相当のロジックがAPI層・service層の両方から再利用できる
+      形に切り出されている（`app/utils/url_safety.py::is_unsafe_lp_host()`）
+- [x] `LPService`が3xxレスポンスを受け取った際、リダイレクト先URLのホストを
+      都度再検証してから追従する（`LPService._fetch_url_revalidating_redirects()`）
+- [x] 最大リダイレクトhop数の上限が設けられている（`LPService.MAX_REDIRECTS = 5`）
+- [x] 正当なLP（http→https正規化、www正規化等の一般的なリダイレクトパターン）が
       引き続き取得できることを回帰テストで確認している
-- [ ] 内部アドレスへのリダイレクトを返す悪意あるサーバーを模したテスト
-      （`responses`等でモック）で、途中hopでの内部アドレスが拒否されることを確認している
+- [x] 内部アドレスへのリダイレクトを返す悪意あるサーバーを模したテストで、
+      途中hopでの内部アドレスが拒否されることを確認している
+
+## 実装内容（Issue #97）
+
+### 1. ホスト検証ロジックの共通化
+
+`backend/app/api/routes/specs.py`にあった`_is_unsafe_lp_host()`（loopback/
+link-local/RFC1918プライベート/reserved/multicast/unspecifiedの判定）を、
+`backend/app/utils/url_safety.py::is_unsafe_lp_host()`として切り出しました。
+判定内容自体は変更していません。`specs.py`（入力URLの初期検証）と
+`lp_service.py`（redirect各hopの再検証）の両方がこの関数を呼びます。
+
+### 2. LPServiceでのredirect hop再検証
+
+`LPService._fetch_url_revalidating_redirects()`を新設し、`requests.get(url,
+timeout=..., allow_redirects=False)`で1 hopずつ取得するループに変更しました。
+
+- 各hopの前に、スキームが`http`/`https`であること、ホストが
+  `is_unsafe_lp_host()`で安全と判定されることを確認する（不正なら
+  `LPUnsafeRedirectError`を送出）
+- 3xxレスポンスを受けたら`Location`ヘッダーを現在のURLを基準に`urljoin()`で
+  絶対URLへ解決し（相対redirectにも対応）、次のhopへ進む
+- `Location`ヘッダーを欠いた不正な3xxレスポンスは`ProcessingError`とする
+- `MAX_REDIRECTS`（5）を超えた場合は`ProcessingError`とし、無限redirectで
+  ハングしないようにする
+
+### 3. エラー伝播: 500ではなくクライアントエラーとして扱う
+
+安全でないredirect先を検出した`LPUnsafeRedirectError`は、他のLP取得失敗
+（タイムアウト・404等、既存のfail-soft設計）とは異なり、`AnalysisOrchestrator`
+の`_step_content_analysis()`・`run()`の両方で特別扱いし、fail-softで
+握りつぶさずそのまま呼び出し元（`specs.py`）まで伝播させます。
+
+`LPUnsafeRedirectError`は`ProcessingError`と`ValueError`の両方を継承して
+おり、`ValueError`を継承していることで、`specs.py::analyze()`の**既存の**
+`except ValueError as e: ... 400`分岐がそのままハンドリングします（specs.py
+自体への変更は不要）。ユーザーへ返すエラーメッセージには、検出した具体的な
+内部アドレス/ホスト名は含めず、「内部アドレス等の安全でないホストが検出された」
+という一般的な文言のみとし、内部ネットワーク構成を過度に露出しないようにして
+います。
+
+### 4. 追加したテスト
+
+- `backend/tests/test_url_safety.py`: `is_unsafe_lp_host()`のユニットテスト
+- `backend/tests/test_lp_service_redirect_ssrf.py`: `LPService`のredirect
+  追従ロジックのテスト（安全な多段redirect、相対redirect解決、内部アドレス
+  へのredirect拒否、redirect上限超過、Locationヘッダー欠如）
+- `backend/tests/test_orchestrator_lp_ssrf_propagation.py`:
+  `AnalysisOrchestrator`が`LPUnsafeRedirectError`を握りつぶさず伝播させる
+  ことの回帰テスト（他のLP失敗は従来通りfail-softのままであることの確認も含む）
+- `backend/tests/test_analyze_endpoint.py`:
+  `TestLpUrlSsrfProtection.test_lp_unsafe_redirect_error_from_orchestrator_returns_400`
+  で、エンドツーエンドで400 VALIDATION_ERRORが返ることを確認
+
+すべて`requests.get`/`socket.getaddrinfo`をモックしており、実際のネットワーク
+I/O・DNS解決には依存していません。
+
+### 残る既知制約
+
+- IPv4-mapped IPv6アドレス（`::ffff:169.254.169.254`等）は`ipaddress`
+  モジュールが正しく内部アドレスとして判定することを確認済みですが、他の
+  エキゾチックなアドレス表記（8進数/16進数表記のIPv4等、`socket.getaddrinfo`
+  が正規化しないケース）まで網羅的に検証したものではありません
+- `MAX_REDIRECTS`（5）は固定値で、環境変数等での調整はできません
+- DNS rebinding（`is_unsafe_lp_host()`のホスト名解決から実際の`requests.get()`
+  実行までの間にDNS応答が切り替わるケース）への対策は引き続き対象外です
+  （本Issueのスコープ外として明記していた高度な攻撃手法）

@@ -19,12 +19,28 @@ from pathlib import Path
 import logging
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from app.services.base_service import BaseService, ValidationError, ProcessingError
+from app.utils.url_safety import is_unsafe_lp_host
 
 
 logger = logging.getLogger(__name__)
+
+
+class LPUnsafeRedirectError(ProcessingError, ValueError):
+    """
+    LP fetchの過程で、redirect(3xx)先が内部アドレス等の安全でないホストに
+    解決された場合に送出する（SSRF対策、Issue #97）。
+
+    `ProcessingError`を継承することで既存の`except (ValidationError,
+    ProcessingError): raise`（execute()側）はそのまま素通しできる。加えて
+    `ValueError`も継承しているため、呼び出し元の`AnalysisOrchestrator`が
+    これを再送出した場合、`backend/app/api/routes/specs.py::analyze()`の
+    既存の`except ValueError as e: ... 400`分岐がそのままハンドリングでき、
+    500ではなくクライアントエラーとして扱われる（specs.py側の変更は不要）。
+    """
+    pass
 
 
 class LPService(BaseService):
@@ -41,10 +57,15 @@ class LPService(BaseService):
     - Simple form detection: count <input>, <textarea>, <select> elements
     """
     
+    # redirect(3xx)を追従する最大hop数（SSRF対策、Issue #97）。安全なホストへの
+    # 一般的なredirect（http→https正規化、www正規化等）は数hopで収まるため、
+    # 実用上十分かつ無限redirectを防げる小さめの値にしている。
+    MAX_REDIRECTS = 5
+
     def __init__(self, timeout: int = 10):
         """
         Initialize LPService.
-        
+
         Args:
             timeout (int): HTTP request timeout in seconds
         """
@@ -165,33 +186,104 @@ class LPService(BaseService):
     def _fetch_html(self, lp_input: str) -> str:
         """
         Fetch HTML from URL or load from file.
-        
+
         Args:
             lp_input (str): URL or file path
-        
+
         Returns:
             str: HTML content
-        
+
         Raises:
             ProcessingError: If fetch/load fails
+            LPUnsafeRedirectError: If a redirect hop resolves to an unsafe
+                (internal/metadata) host — see _fetch_url_revalidating_redirects()
         """
         try:
             if lp_input.startswith('http'):
                 # Fetch from URL
                 self.logger.info(f"Fetching URL: {lp_input}")
-                response = requests.get(lp_input, timeout=self.timeout)
-                response.raise_for_status()
+                response = self._fetch_url_revalidating_redirects(lp_input)
                 return response.text
             else:
                 # Load from file
                 self.logger.info(f"Loading HTML file: {lp_input}")
                 with open(lp_input, 'r', encoding='utf-8') as f:
                     return f.read()
-        
+
+        except LPUnsafeRedirectError:
+            # 安全でないredirect先の検出は、下のexcept Exceptionで一般的な
+            # ProcessingErrorへ握りつぶさず、そのまま呼び出し元へ伝える
+            # （execute()側のexcept (ValidationError, ProcessingError): raise
+            # が素通しし、AnalysisOrchestratorがさらに非fatal扱いせず
+            # 再送出するように連携している。Issue #97参照）
+            raise
         except requests.RequestException as e:
             raise ProcessingError(f"Failed to fetch URL {lp_input}: {str(e)}")
         except Exception as e:
             raise ProcessingError(f"Failed to load HTML: {str(e)}")
+
+    def _fetch_url_revalidating_redirects(self, url: str) -> "requests.Response":
+        """
+        URLをGETし、redirect(3xx)を受け取るたびに遷移先URLのホストを再検証して
+        から追従する（SSRF対策、Issue #97）。
+
+        `requests.get(url, timeout=...)`をそのまま呼ぶと、`allow_redirects`の
+        既定値（GETでは`True`）により、requestsが内部でredirectを自動追従して
+        しまう。この場合、`specs.py`側で行っている入力URLのホスト検証
+        （`app.utils.url_safety.is_unsafe_lp_host`）はredirect先には及ばず、
+        一見安全な外部URLが内部アドレス（クラウドメタデータエンドポイント等）へ
+        redirectするだけでSSRF対策をすり抜けられてしまう。
+
+        そのため、ここでは`allow_redirects=False`にした上で自前でループし、
+        3xxを受け取るたびに`Location`ヘッダーの遷移先ホストを都度検証してから
+        次のリクエストを送る。安全なredirect（http→https正規化、www正規化等）は
+        通常数hopで収まるため、`MAX_REDIRECTS`回までは許容する。
+
+        Raises:
+            LPUnsafeRedirectError: いずれかのhopのURLが内部アドレス等の
+                安全でないホストに解決された場合
+            ProcessingError: redirect回数が上限を超えた場合、または
+                Locationヘッダーを欠いた不正な3xxレスポンスを受けた場合
+        """
+        current_url = url
+        for hop in range(self.MAX_REDIRECTS + 1):
+            self._raise_if_unsafe_url(current_url, hop=hop)
+
+            response = requests.get(current_url, timeout=self.timeout, allow_redirects=False)
+
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("Location")
+                if not location:
+                    raise ProcessingError(
+                        f"リダイレクト応答(HTTP {response.status_code})にLocationヘッダーが"
+                        f"ありません: {current_url}"
+                    )
+                # 相対URLでのredirect（例: Location: /new-path）を現在のURLを
+                # 基準に絶対URLへ解決する
+                current_url = urljoin(current_url, location)
+                continue
+
+            response.raise_for_status()
+            return response
+
+        raise ProcessingError(
+            f"リダイレクトの上限回数（{self.MAX_REDIRECTS}回）を超えました: {url}"
+        )
+
+    @staticmethod
+    def _raise_if_unsafe_url(url: str, hop: int) -> None:
+        """urlのスキーム/ホストが安全でなければLPUnsafeRedirectErrorを送出する"""
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise LPUnsafeRedirectError(
+                f"LP fetchのredirect先が許可されていないスキームです（hop {hop}）"
+            )
+        hostname = parsed.hostname
+        if not hostname or is_unsafe_lp_host(hostname):
+            raise LPUnsafeRedirectError(
+                f"LP fetchのredirect先に内部アドレス等の安全でないホストが検出されたため"
+                f"中止しました（hop {hop}）"
+            )
     
     # ===== Extraction Methods =====
     
