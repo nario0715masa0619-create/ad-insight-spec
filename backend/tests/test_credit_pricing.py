@@ -22,6 +22,9 @@ class TestDefaultTiers:
     def test_file_plus_lp_is_standard_tier(self):
         assert credit_cost_for_mode("file_plus_lp", settings=_settings()) == 2
 
+    def test_file_plus_kpi_is_standard_tier(self):
+        assert credit_cost_for_mode("file_plus_kpi", settings=_settings()) == 2
+
     def test_file_plus_lp_plus_manual_kpi_is_heavy_tier(self):
         assert credit_cost_for_mode("file_plus_lp_plus_manual_kpi", settings=_settings()) == 3
 

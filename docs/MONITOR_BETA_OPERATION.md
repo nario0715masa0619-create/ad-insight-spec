@@ -68,9 +68,10 @@ CampaignPilotは「月◯件まで」という単純な件数制ではなく、*
 
   | 分析内容 | 消費クレジット |
   |---|---:|
-  | クリエイティブ単体の分析（file_only） | 1 |
-  | クリエイティブ + LP分析（file_plus_lp） | 2 |
-  | クリエイティブ + LP + KPI分析（file_plus_lp_plus_manual_kpi） | 3 |
+  | クリエイティブのみ（file_only、最小・簡易） | 1 |
+  | クリエイティブ + LP（file_plus_lp、数値なし・簡易） | 2 |
+  | クリエイティブ + CSV/KPI（file_plus_kpi、LPなし・広告面分析） | 2 |
+  | クリエイティブ + LP + CSV/KPI（file_plus_lp_plus_manual_kpi、**標準・推奨**） | 3 |
 
   この消費量は環境変数（`CREDIT_COST_LIGHT` / `CREDIT_COST_STANDARD` / `CREDIT_COST_HEAVY`）で
   調整可能です。コードを変更せずに運用側で見直せます（詳細:

@@ -42,7 +42,7 @@ class AnalysisOrchestrator:
             input_path: Path to creative file (video/image/text)
             lp_input: LP URL or HTML file path (optional)
             kpi_path: KPI JSON file path (optional)
-            mode: Input mode (file_only / file_plus_lp / file_plus_lp_plus_manual_kpi / api_import_ready)
+            mode: Input mode (file_only / file_plus_lp / file_plus_kpi / file_plus_lp_plus_manual_kpi / api_import_ready)
             asset_name: ユーザー指定の広告名/キャンペーン名（optional。未指定ならフォールバックなし=None）
         """
         self.input_path = input_path

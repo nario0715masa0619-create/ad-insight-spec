@@ -279,3 +279,172 @@ class TestMetaAdsCsvErrorHandling:
 
         assert response.status_code == 422
         assert response.json()["detail"]["error_code"] != "ANALYSIS_ERROR"
+
+
+class TestLpUrlInput:
+    """
+    主入力の再定義（docs/plans/primary_input_redesign.md）で追加した lp_url
+    フォームパラメータ。LP を「URL文字列」として直接渡せること、lp_file との
+    併用時は lp_url を優先すること、不正なURL形式は422で弾かれることを検証する。
+
+    テストで使う lp_url には実在ドメイン（example.com等）ではなく、リテラルの
+    パブリックIPアドレス（93.184.216.34）を使う。specs.py側のSSRF対策
+    （_is_unsafe_lp_host）がホスト名解決にsocket.getaddrinfo()を使うため、
+    ホスト名を渡すとテスト実行時に実際のDNS解決が発生してしまう
+    （ネットワーク遮断環境でのテストの不安定化を避けるため、リテラルIPなら
+    DNS解決自体が発生しない）。SSRF対策自体の専用テストは
+    TestLpUrlSsrfProtection を参照。
+    """
+
+    def _spec_dict(self):
+        d = _minimal_valid_spec_dict(asset_id="asset_lp_url_test")
+        d["input_metadata"]["mode"] = "file_plus_lp"
+        d["_metadata"]["input_mode"] = "file_plus_lp"
+        d["landing_page"] = {"url": "https://93.184.216.34/lp"}
+        return d
+
+    def test_lp_url_is_passed_to_orchestrator_as_lp_input(self, client):
+        spec_dict = self._spec_dict()
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp", "lp_url": "https://93.184.216.34/lp"},
+            )
+
+        assert response.status_code == 200
+        assert mock_orchestrator_cls.call_args.kwargs["lp_input"] == "https://93.184.216.34/lp"
+
+    def test_lp_url_takes_precedence_over_lp_file(self, client):
+        """lp_url と lp_file が両方指定された場合、lp_url を優先しファイル保存自体を行わないこと"""
+        spec_dict = self._spec_dict()
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={
+                    "input_file": ("test.png", b"fake-image-bytes", "image/png"),
+                    "lp_file": ("lp.html", b"<html></html>", "text/html"),
+                },
+                data={"mode": "file_plus_lp", "lp_url": "https://93.184.216.34/lp"},
+            )
+
+        assert response.status_code == 200
+        assert mock_orchestrator_cls.call_args.kwargs["lp_input"] == "https://93.184.216.34/lp"
+
+    def test_invalid_lp_url_scheme_returns_422(self, client):
+        response = client.post(
+            "/api/v1/specs/analyze",
+            files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+            data={"mode": "file_plus_lp", "lp_url": "example.com/lp"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["error_code"] == "VALIDATION_ERROR"
+
+
+class TestLpUrlSsrfProtection:
+    """
+    lp_url がサーバー側（LPService）からのHTTP GET対象になることを踏まえた
+    SSRF対策（specs.py::_is_unsafe_lp_host）の回帰テスト。PR #93レビューで
+    指摘された、認証済みユーザーが内部アドレス/クラウドメタデータエンドポイントを
+    lp_url経由で到達させられる問題への対応。
+
+    すべてリテラルIPアドレス/既知の禁止ホスト名を使い、実際のDNS解決や
+    ネットワークI/Oを発生させない。
+    """
+
+    @pytest.mark.parametrize(
+        "lp_url",
+        [
+            "http://127.0.0.1/",  # loopback
+            "http://localhost/",  # 明示的に禁止したホスト名
+            "http://169.254.169.254/computeMetadata/v1/",  # link-local / GCPメタデータ
+            "http://metadata.google.internal/computeMetadata/v1/",  # GCPメタデータのホスト名
+            "http://10.0.0.5/",  # RFC1918 private
+            "http://172.16.0.5/",  # RFC1918 private
+            "http://192.168.1.5/",  # RFC1918 private
+            "http://[::1]/",  # IPv6 loopback
+        ],
+    )
+    def test_unsafe_lp_url_host_is_rejected(self, client, lp_url):
+        response = client.post(
+            "/api/v1/specs/analyze",
+            files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+            data={"mode": "file_plus_lp", "lp_url": lp_url},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["error_code"] == "VALIDATION_ERROR"
+
+    def test_safe_public_lp_url_is_accepted(self, client):
+        """パブリックIPを指した通常のlp_urlは、SSRF対策の追加後も引き続き利用できること"""
+        spec_dict = _minimal_valid_spec_dict(asset_id="asset_lp_url_safe_test")
+        spec_dict["input_metadata"]["mode"] = "file_plus_lp"
+        spec_dict["_metadata"]["input_mode"] = "file_plus_lp"
+        spec_dict["landing_page"] = {"url": "https://93.184.216.34/lp"}
+
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls:
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp", "lp_url": "https://93.184.216.34/lp"},
+            )
+
+        assert response.status_code == 200
+
+    def test_unresolvable_hostname_is_not_blocked_here(self, client):
+        """
+        名前解決できないホストは、この時点では拒否しない（安全側ではあるが誤検知回避を
+        優先する設計。_is_unsafe_lp_host()のdocstring参照）。実際のfetchは後続の
+        LPServiceが行い、そこで失敗する。ここではspecs.pyの422バリデーションを
+        通過することだけを確認する（Orchestrator自体はモックするため実fetchは発生しない）。
+
+        socket.getaddrinfo自体をモックしてgaierrorを起こし、テスト実行環境の実際の
+        DNS解決可否（ネットワーク遮断環境での失敗・遅延）に依存しないようにする。
+        """
+        spec_dict = _minimal_valid_spec_dict(asset_id="asset_lp_url_unresolvable_test")
+        spec_dict["input_metadata"]["mode"] = "file_plus_lp"
+        spec_dict["_metadata"]["input_mode"] = "file_plus_lp"
+        spec_dict["landing_page"] = {"url": "https://this-host-should-not-resolve.invalid/lp"}
+
+        with patch.object(specs_module, "AnalysisOrchestrator") as mock_orchestrator_cls, \
+                patch.object(specs_module.socket, "getaddrinfo", side_effect=specs_module.socket.gaierror):
+            mock_orchestrator_cls.return_value.run.return_value = spec_dict
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={"input_file": ("test.png", b"fake-image-bytes", "image/png")},
+                data={"mode": "file_plus_lp", "lp_url": "https://this-host-should-not-resolve.invalid/lp"},
+            )
+
+        assert response.status_code == 200
+
+
+class TestFilePlusKpiMode:
+    """
+    主入力の再定義で追加した file_plus_kpi モード（クリエイティブ + KPI、LPなし・
+    広告面分析）が、/analyze エンドポイントで受理されエンドツーエンドで動作することの
+    回帰テスト。スキーマレベルの詳細な検証は test_input_mode_schema.py を参照。
+    """
+
+    def test_file_plus_kpi_mode_is_accepted(self, client):
+        spec_dict = _minimal_valid_spec_dict(asset_id="asset_file_plus_kpi_test")
+        spec_dict["input_metadata"]["mode"] = "file_plus_kpi"
+        spec_dict["_metadata"]["input_mode"] = "file_plus_kpi"
+        spec_dict["performance"] = {"impressions": 1000, "clicks": 10}
+
+        with patch.object(specs_module.AnalysisOrchestrator, "run", return_value=spec_dict):
+            response = client.post(
+                "/api/v1/specs/analyze",
+                files={
+                    "input_file": ("test.png", b"fake-image-bytes", "image/png"),
+                    "kpi_file": ("kpi.csv", b"impressions,clicks\n1000,10\n", "text/csv"),
+                },
+                data={"mode": "file_plus_kpi"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["performance"]["impressions"] == 1000
+        assert response.json()["landing_page"] is None

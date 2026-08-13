@@ -117,13 +117,16 @@ streamlit run frontend/streamlit_app.py
 
 ## 主要機能
 
-- **3つの入力モード**:
-  1. ile_only: クリエイティブ（画像/動画）単体での分析
-  2. ile_plus_lp: クリエイティブ ＋ LP での分析（未実装項目あり）
-  3. ile_plus_lp_plus_manual_kpi: KPI情報を含めたフル分析
-- **4つのエンドポイント**: nalyze, GET, GET by ID, DELETE
-- **Streamlit UI**: ファイルアップロードから分析、結果の一覧表示、詳細確認までをブラウザ上で実行可能
-- **Meta Ads CSV インポート**: Meta Ads Manager からエクスポートしたCSVを、列の整形なしでそのままアップロードしてKPIを取り込み可能（`file_plus_lp_plus_manual_kpi` モード内の新しい入力手段。詳細は [Meta Ads CSV インポートガイド](docs/META_ADS_CSV_IMPORT.md)）
+CampaignPilotの主入力は **Meta Ads CSV（数値の根拠）+ 広告クリエイティブ（訴求・表現の根拠）+ LP（遷移先体験の根拠）** の3点です。この3点をつなぐことで、CTR/CPA等の数値だけでは分からない「なぜ数値が悪化したか」（クリエイティブの訴求が弱いのか、LPとの接続が悪いのか）まで踏み込んだ改善判断を支援します（設計の詳細: [主入力の再定義メモ](docs/plans/primary_input_redesign.md)）。
+
+- **4つの分析パターン**（`mode`パラメータ。詳細は [Meta Ads CSV インポートガイド](docs/META_ADS_CSV_IMPORT.md)）:
+  1. `file_plus_lp_plus_manual_kpi`（標準・推奨）: クリエイティブ + LP + CSV/KPI
+  2. `file_plus_kpi`: クリエイティブ + CSV/KPI（LPなし・広告面分析）
+  3. `file_plus_lp`: クリエイティブ + LP（数値なし・簡易分析）
+  4. `file_only`: クリエイティブのみ（最小・簡易分析）
+- **4つのエンドポイント**: analyze, GET, GET by ID, DELETE
+- **Streamlit UI**: CSVアップロード・クリエイティブアップロード（複数可）・LP URL入力から分析実行、結果の一覧表示、詳細確認までをブラウザ上で実行可能
+- **Meta Ads CSV インポート**: Meta Ads Manager からエクスポートしたCSVを、列の整形なしでそのままアップロードしてKPIを取り込み可能（`file_plus_lp_plus_manual_kpi`/`file_plus_kpi` モードの推奨入力手段。手入力(JSON)はCSVが手元にない場合の補助的な方法。詳細は [Meta Ads CSV インポートガイド](docs/META_ADS_CSV_IMPORT.md)）
 
 ## API エンドポイント
 

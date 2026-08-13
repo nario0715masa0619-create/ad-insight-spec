@@ -45,9 +45,10 @@ def cli():
 @click.option(
     '--mode', 
     type=click.Choice([
-        'file_only', 
-        'file_plus_lp', 
-        'file_plus_lp_plus_manual_kpi', 
+        'file_only',
+        'file_plus_lp',
+        'file_plus_kpi',
+        'file_plus_lp_plus_manual_kpi',
         'api_import_ready'
     ]),
     default='file_plus_lp_plus_manual_kpi',
@@ -169,7 +170,17 @@ def _validate_mode_requirements(mode: str, lp: Optional[str], kpi: Optional[str]
             raise click.BadParameter(
                 "file_plus_lp mode does not accept --kpi"
             )
-            
+
+    elif mode == 'file_plus_kpi':
+        if lp:
+            raise click.BadParameter(
+                "file_plus_kpi mode does not accept --lp"
+            )
+        if not kpi:
+            raise click.BadParameter(
+                "file_plus_kpi mode requires --kpi"
+            )
+
     elif mode == 'file_plus_lp_plus_manual_kpi':
         if not lp:
             raise click.BadParameter(
