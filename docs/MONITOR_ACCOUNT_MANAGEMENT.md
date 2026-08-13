@@ -86,9 +86,9 @@ curl -X POST http://localhost:8000/api/v1/admin/companies \
 
 ### CLI
 ```bash
-python scripts/manage_monitor_accounts.py create-plan --code growth --name "Growth" --price 79800 --credits 300
-python scripts/manage_monitor_accounts.py create-plan --code monitor --name "Monitor" --credits 100 --private
-python scripts/manage_monitor_accounts.py create-plan --code pro --name "Pro" --price 149800 --credits 650 \
+python scripts/manage_monitor_accounts.py create-plan --code growth --name "Growth" --price 99800 --credits 300
+python scripts/manage_monitor_accounts.py create-plan --code monitor --name "Monitor Beta" --price 0 --credits 300 --private
+python scripts/manage_monitor_accounts.py create-plan --code pro --name "Pro" --price 179800 --credits 650 \
   --note "初期導入企業向けキャンペーン企画中"
 python scripts/manage_monitor_accounts.py list-plans
 python scripts/manage_monitor_accounts.py update-plan --code pro --credits 700
@@ -225,7 +225,7 @@ python scripts/manage_monitor_accounts.py list-usage
 ```
 slug                 name                     limit source       active   used/limit(credits)   remaining
 acme                 株式会社Acme              plan:growth        True     12/300                288
-sample-monitor       サンプル社（モニター）     plan:monitor       True     8/100                 92
+sample-monitor       サンプル社（モニター）     plan:monitor       True     8/300                 292
 special-co           特別契約社                override           True     40/500                460
 new-co               新規登録直後の会社          fallback           True     0/100                 100
 ```

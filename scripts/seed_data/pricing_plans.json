@@ -3,17 +3,17 @@
   "plans": [
     {
       "code": "monitor",
-      "name": "Monitor",
-      "monthly_price_jpy": null,
-      "monthly_credit_limit": 100,
-      "marketing_note": "招待制モニターベータ企業向け。個別に契約条件を調整する場合は会社側で上限をoverrideすること。",
+      "name": "Monitor Beta",
+      "monthly_price_jpy": 0,
+      "monthly_credit_limit": 300,
+      "marketing_note": "招待制モニターベータ企業向けの無料検証枠。正式プラン（Starter/Growth/Pro/Enterprise）とは分離して管理する。個別に契約条件を調整する場合は会社側で上限をoverrideすること。",
       "is_public": false,
       "display_order": 0
     },
     {
       "code": "starter",
       "name": "Starter",
-      "monthly_price_jpy": 29800,
+      "monthly_price_jpy": 49800,
       "monthly_credit_limit": 100,
       "marketing_note": null,
       "is_public": true,
@@ -22,7 +22,7 @@
     {
       "code": "growth",
       "name": "Growth",
-      "monthly_price_jpy": 79800,
+      "monthly_price_jpy": 99800,
       "monthly_credit_limit": 300,
       "marketing_note": null,
       "is_public": true,
@@ -31,7 +31,7 @@
     {
       "code": "pro",
       "name": "Pro",
-      "monthly_price_jpy": 149800,
+      "monthly_price_jpy": 179800,
       "monthly_credit_limit": 650,
       "marketing_note": "初期導入企業向けキャンペーン企画中",
       "is_public": true,
