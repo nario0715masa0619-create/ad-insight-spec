@@ -100,6 +100,17 @@ docsをそれに合わせて整えた設計判断を記録します。
 「LP URL（推奨）」「LPファイルをアップロード（HTML）」の選択式にしました。`lp_url`と`lp_file`が
 両方指定された場合は`lp_url`を優先します（ファイル保存自体を行わない）。
 
+`lp_url`は認証済みユーザーが指定した任意のURLをサーバー側（`LPService`）からGETする経路
+であるため、レビューで指摘を受けてSSRF対策（loopback/link-local/クラウドメタデータ/RFC1918
+プライベートIP等の内部アドレスを422で拒否）を追加しています
+（`backend/app/api/routes/specs.py::_is_unsafe_lp_host()`）。これは**入力URLに対する
+最低限の防御**であり、HTTPリダイレクトを追従した先のホストまでは再検証していません。
+この残論点は独立したfollow-upとして切り出しています。
+
+> **follow-up整理済み**: redirect経由のSSRFバイパス可能性について、現状防御の範囲・
+> 想定攻撃シナリオ・対応案の比較を整理しました。
+> [lp_url_redirect_ssrf_followup.md](./lp_url_redirect_ssrf_followup.md) を参照してください。
+
 ## 手入力KPIの位置づけ変更
 
 `file_plus_lp_plus_manual_kpi`モード内のKPI入力方法（Meta Ads CSV / JSON手入力の選択式）自体は
