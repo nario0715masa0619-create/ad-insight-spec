@@ -15,7 +15,17 @@ CampaignPilot（Ad-Insight-Spec）を SQLite から PostgreSQL へ移行する�
 **Python 3.13向けホイール（`cp313`）が存在しない**ことを確認した（3.14だけでなく
 3.13でも本ドキュメント記載の懸念が該当する）。本番Pythonが3.13.5という記録
 （[postgresql_hosting_decision_memo.md](./postgresql_hosting_decision_memo.md)参照）が正しければ、
-Postgres移行時には`requirements.txt`の該当1行の更新が必須である。
+`requirements.txt`のピン値と実際に動くバージョンが一致していないことになる。
+
+**訂正（さらに後続の本番SSH調査で判明）**: 上記はPyPIのメタデータのみに基づく懸念だったが、
+本番venv（`/opt/ad-insight-spec/venv`）を読み取り専用で直接確認したところ、**実際には
+`psycopg2-binary==2.9.12`が既にインストール済み**であることが分かった（`requirements.txt`の
+ピン値`2.9.9`とは異なるが、動作するバージョンは既に入っている）。そのため、
+**Postgres移行時に`requirements.txt`の更新が「必須」とまでは言えず、想定していたリスクは
+低い**。`requirements.txt`・未コミットの`setup.sh`の表記と実態の乖離自体は、
+移行そのもののブロッカーではなく[Issue #84](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/84)
+（運用衛生課題の整理）の対象として解消することを推奨する。詳細:
+[monitor_beta_production_backup_status.md](./monitor_beta_production_backup_status.md) 6-3節。
 
 **重要な前提の注記**: 本ドキュメントの検証内容は、すべてローカルの検証用環境
 （ローカルWindows機に新規インストールしたPostgreSQL 16、または開発用SQLite）で
