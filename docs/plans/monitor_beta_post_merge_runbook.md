@@ -38,12 +38,13 @@ auth state安定化（[PR #96](https://github.com/nario0715masa0619-create/ad-in
 
 **未着手（重要）**: Phase 3「本番適用」（`alembic upgrade head`の本番実行・本番へのコード
 デプロイ）自体はこの時点でまだ実施していません。加えて、[本番適用前提条件の整理
-（PR #92、`docs/monitor-beta-production-prerequisites`ブランチ）](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/92)
-（`main`未マージ）により、**本番の`alembic_version`が実スキーマと食い違っており、
-素朴に`alembic upgrade head`を実行すると失敗する可能性が高い**という新たな重大事項が
-判明しています。本番適用（Phase 3）に進む前に、必ずPR #92の内容（および関連する
-[Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)系列）を
-確認してください。
+（PR #92）](https://github.com/nario0715masa0619-create/ad-insight-spec/pull/92)（`main`マージ済み、
+詳細: [monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)）により、
+**本番の`alembic_version`が実スキーマと食い違っており、素朴に`alembic upgrade head`を
+実行すると失敗する可能性が高い**という重大事項が判明しています。本番適用（Phase 3）に
+進む前に、必ず[monitor_beta_production_prerequisites.md](./monitor_beta_production_prerequisites.md)
+の内容（および関連する[Issue #80](https://github.com/nario0715masa0619-create/ad-insight-spec/issues/80)
+系列）を確認してください。
 
 ## 全体の流れ
 
