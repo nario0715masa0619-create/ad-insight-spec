@@ -133,7 +133,7 @@ Meta Ads Manager からエクスポートされたCSVを、列の並べ替えや
 [MONITOR_BETA_OPERATION.md](./MONITOR_BETA_OPERATION.md)、設計背景:
 [クレジット課金設計案](./campaignpilot_credit_billing_design.md)）。
 
-- `pricing_plans`: 価格・プラン定義（Starter/Growth/Pro/Monitor/Enterpriseなど）を
+- `pricing_plans`: 価格・プラン定義（Starter/Growth/Pro/Monitor Beta/Enterpriseなど）を
   コードの定数ではなくデータとして保持するテーブル。`code`（人間可読な一意キー）、
   `name`、`monthly_price_jpy`（個別見積プランはNULL可）、`monthly_credit_limit`、
   `marketing_note`（例:「初期導入企業向けキャンペーン企画中」）、`is_public`、
