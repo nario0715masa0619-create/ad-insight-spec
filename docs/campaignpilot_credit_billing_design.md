@@ -4,7 +4,7 @@
 > （2026-08時点、第3段階 + レビュー対応まで実装済み）では、このうち「会社単位のクレジット管理」
 > 「分析タイプ別の3段階固定消費（1/2/3）」「月初リセット」「実行前残量チェック」
 > 「成功時消費」「利用履歴の最小実装」「管理者の手動調整」に加え、**第2段階として
-> プラン定義（Starter/Growth/Pro/Monitor/Enterprise）を`pricing_plans`テーブルへ
+> プラン定義（Starter/Growth/Pro/Monitor Beta/Enterprise）を`pricing_plans`テーブルへ
 > 外出し**し、会社ごとの個別上書きとプラン適用を両立できるようにし、**第3段階として
 > 初期5プランのマスタデータ投入（`scripts/seed_data/pricing_plans.json` +
 > `seed-plans`コマンドによる冪等upsert）とモニター運用ルール・オンボーディング手順を

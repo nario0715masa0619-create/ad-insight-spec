@@ -30,7 +30,7 @@ python ../scripts/manage_monitor_accounts.py create-user --company-slug internal
 ## 1-1. 初期プランを投入する（環境構築時に1度）
 
 新しい環境（開発機・検証環境など）を用意したら、会社を作る前に初期プラン5種
-（Monitor / Starter / Growth / Pro / Enterprise）を投入してください。定義は
+（Monitor Beta / Starter / Growth / Pro / Enterprise）を投入してください。定義は
 `scripts/seed_data/pricing_plans.json` にマスタデータとして保持しており、
 価格・クレジット量・文言はこのJSONを編集するだけで調整できます（コード変更・
 再デプロイ不要）。
@@ -73,7 +73,7 @@ curl -X POST http://localhost:8000/api/v1/admin/companies \
   その会社は個別上書きを持たない状態（NULL）で作成され、後述のプランに紐づけるか、
   何も紐づけなければ既定値（100クレジット）にフォールバックします。
 
-## 2-1. 価格・プランを定義する（Starter/Growth/Pro/Monitor/Enterpriseなど）
+## 2-1. 価格・プランを定義する（Starter/Growth/Pro/Monitor Beta/Enterpriseなど）
 
 プラン名・価格・付与クレジット・マーケティング文言はコードではなく `pricing_plans`
 テーブルで管理します。会社は個別上書きを持たない限り、紐づいたプランの
@@ -100,7 +100,7 @@ python scripts/manage_monitor_accounts.py update-plan --code pro --inactive   # 
 curl -X POST http://localhost:8000/api/v1/admin/plans \
   -H "Authorization: Bearer <管理者のsession_token>" \
   -H "Content-Type: application/json" \
-  -d '{"code": "pro", "name": "Pro", "monthly_price_jpy": 149800, "monthly_credit_limit": 650, "marketing_note": "初期導入企業向けキャンペーン企画中", "display_order": 3}'
+  -d '{"code": "pro", "name": "Pro", "monthly_price_jpy": 179800, "monthly_credit_limit": 650, "marketing_note": "初期導入企業向けキャンペーン企画中", "display_order": 3}'
 
 curl http://localhost:8000/api/v1/admin/plans \
   -H "Authorization: Bearer <管理者のsession_token>"
@@ -154,10 +154,10 @@ python scripts/manage_monitor_accounts.py clear-limit-override --company-slug ac
   早めに `monitor` または該当プランを割り当てること（`list-usage`の`limit source`列が
   `fallback`の会社は、割り当て漏れの可能性を疑う） |
 
-**`is_public=false` のプラン（Monitor/Enterprise）について**: これは「外部の価格表ページに
+**`is_public=false` のプラン（Monitor Beta/Enterprise）について**: これは「外部の価格表ページに
 表示するかどうか」を区別するためだけのフラグで、機能的な制限は一切ありません
 （`is_public=false`でも通常どおり会社に割り当てて使えます）。今回は価格表ページ自体を
-実装していないため、実運用上は「Monitor/Enterpriseは一般顧客向けに営業提案する対象では
+実装していないため、実運用上は「Monitor Beta/Enterpriseは一般顧客向けに営業提案する対象では
 ない」という位置づけの記録以上の意味は持ちません。
 
 **`monthly_credit_limit=0` について**: 0は無効な値やバグではなく、「アカウントは
@@ -363,7 +363,7 @@ python scripts/manage_monitor_accounts.py clear-limit-override --company-slug ac
 override を設定しっぱなしにしないよう、`notes`（`PATCH /api/v1/admin/companies/{id}`の
 `notes`フィールド、CLIには未対応）に「いつまでの一時増枠か」を書き残しておくことを推奨します。
 
-**モニター企業が商用プランへ移行する（例: Monitor → Growth）**:
+**モニター企業が商用プランへ移行する（例: Monitor Beta → Growth）**:
 ```bash
 python scripts/manage_monitor_accounts.py assign-plan --company-slug acme --plan-code growth --clear-override
 ```
