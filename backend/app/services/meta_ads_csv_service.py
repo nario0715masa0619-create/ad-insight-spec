@@ -68,6 +68,7 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
         "クリック数",
         "リンクのクリック数",
         "リンククリック数",
+        "リンククリック",
         "clicks (all)",
         "clicks(all)",
         "link clicks",
