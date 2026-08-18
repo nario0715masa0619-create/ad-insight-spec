@@ -179,3 +179,39 @@ class TestPercentAndCurrencyParsing:
         assert result["kpi"]["impressions"] == 1000
         assert result["kpi"]["clicks"] == 20
         assert result["kpi"]["spend"] == 5000.0
+
+
+class TestClickAliasVariants:
+    """clicks列のエイリアス表記ゆれ（PR: リンククリック対応）"""
+
+    def test_link_click_without_suffix_is_recognized_as_clicks(self):
+        # 実際のMeta Ads CSVエクスポートで観測された表記。「リンククリック数」とは
+        # 末尾の「数」の有無だけが異なり、これまでCOLUMN_ALIASESに未登録だったため
+        # 必須列不足エラーになっていた（回帰防止テスト）。
+        csv_text = (
+            "キャンペーン名,インプレッション,リンククリック,消化金額 (JPY)\n"
+            "AIS,7271,57,4338\n"
+        )
+        result = MetaAdsCsvService.parse_text(csv_text)
+        assert result["kpi"]["clicks"] == 57
+        assert result["column_mapping"]["clicks"] == "リンククリック"
+
+    def test_link_click_count_suffix_still_recognized_as_clicks(self):
+        # 既存エイリアス「リンククリック数」が今回の追加で壊れていないことを確認する。
+        csv_text = (
+            "キャンペーン名,インプレッション,リンククリック数,消化金額 (JPY)\n"
+            "AIS,7271,57,4338\n"
+        )
+        result = MetaAdsCsvService.parse_text(csv_text)
+        assert result["kpi"]["clicks"] == 57
+        assert result["column_mapping"]["clicks"] == "リンククリック数"
+
+    def test_clicks_all_still_recognized_as_clicks(self):
+        # 既存エイリアス「クリック（すべて）」が今回の追加で壊れていないことを確認する。
+        csv_text = (
+            "キャンペーン名,インプレッション,クリック（すべて）,消化金額 (JPY)\n"
+            "AIS,7271,57,4338\n"
+        )
+        result = MetaAdsCsvService.parse_text(csv_text)
+        assert result["kpi"]["clicks"] == 57
+        assert result["column_mapping"]["clicks"] == "クリック（すべて）"
